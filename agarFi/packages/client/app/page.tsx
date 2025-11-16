@@ -71,6 +71,14 @@ export default function HomePage() {
     localStorage.setItem('playerId', playerId);
     localStorage.setItem('playerName', playerName);
     localStorage.setItem('selectedTier', tier);
+    localStorage.removeItem('spectatorMode'); // Clear spectator flag
+    
+    router.push('/game');
+  };
+
+  const spectateGame = (tier: string) => {
+    localStorage.setItem('selectedTier', tier);
+    localStorage.setItem('spectatorMode', 'true');
     
     router.push('/game');
   };
@@ -148,17 +156,37 @@ export default function HomePage() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => joinLobby(mode.tier)}
-                  disabled={isLocked}
-                  className={`w-full py-3 rounded-lg font-bold transition-all ${
-                    isLocked
-                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white'
-                  }`}
-                >
-                  {isLocked ? 'Coming Soon' : 'Join Lobby'}
-                </button>
+                <div className="space-y-2">
+                  {/* Show Join button ONLY if not locked and not playing */}
+                  {!isLocked && (!lobby || lobby.status !== 'playing') && (
+                    <button
+                      onClick={() => joinLobby(mode.tier)}
+                      className="w-full py-3 rounded-lg font-bold transition-all bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white"
+                    >
+                      Join Lobby
+                    </button>
+                  )}
+
+                  {/* Show Spectate button if game is in progress */}
+                  {!isLocked && lobby && lobby.status === 'playing' && (
+                    <button
+                      onClick={() => spectateGame(mode.tier)}
+                      className="w-full py-3 bg-purple-500/20 border-2 border-purple-500/50 hover:bg-purple-500/30 rounded-lg text-purple-400 font-bold transition-all"
+                    >
+                      👁️ Spectate Game
+                    </button>
+                  )}
+
+                  {/* Show Coming Soon for locked modes */}
+                  {isLocked && (
+                    <button
+                      disabled
+                      className="w-full py-3 rounded-lg font-bold bg-gray-700 text-gray-500 cursor-not-allowed"
+                    >
+                      Coming Soon
+                    </button>
+                  )}
+                </div>
 
                 <div className="mt-4 text-xs text-gray-500">
                   <div>Max Players: {mode.maxPlayers}</div>

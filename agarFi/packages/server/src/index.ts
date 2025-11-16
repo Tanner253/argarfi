@@ -106,15 +106,46 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Spectate game
+  socket.on('spectateGame', ({ lobbyId }) => {
+    socket.join(lobbyId);
+    console.log(`Spectator joined ${lobbyId}`);
+    
+    // Send immediate game state if game is running
+    const game = lobbyManager.getGame(lobbyId);
+    if (game) {
+      socket.emit('gameStart', { startTime: Date.now(), gameId: lobbyId });
+    }
+  });
+
+  // Player leaves lobby
+  socket.on('leaveLobby', ({ playerId }) => {
+    lobbyManager.leaveLobby(playerId);
+    console.log(`Player ${playerId} left lobby`);
+  });
+
   // Player disconnects
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
-    // TODO: Handle disconnect grace period
+    
+    // Find and remove player from any lobby they're in
+    lobbyManager.handleDisconnect(socket.id);
   });
 });
 
 // Start lobby broadcast loop
 lobbyManager.broadcastLobbyUpdates();
+
+// Check for ended games periodically
+setInterval(() => {
+  const allGames = Array.from(lobbyManager['games'].values());
+  for (const game of allGames) {
+    if (!game.isRunning()) {
+      // Game has ended, cleanup
+      lobbyManager.handleGameEnd(game.getGameId());
+    }
+  }
+}, 5000); // Check every 5 seconds
 
 // Start server
 const PORT = config.server.port;

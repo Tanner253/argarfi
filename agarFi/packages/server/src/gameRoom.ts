@@ -504,6 +504,22 @@ export class GameRoom {
     this.io.to(this.id).emit('gameEnd', result);
     
     console.log(`Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
+    
+    // Notify lobby manager to cleanup (this will be called externally)
+  }
+
+  /**
+   * Get game ID
+   */
+  getGameId(): string {
+    return this.id;
+  }
+
+  /**
+   * Check if game is still running
+   */
+  isRunning(): boolean {
+    return this.tickInterval !== null;
   }
 
   /**

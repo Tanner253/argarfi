@@ -56,6 +56,7 @@ export default function GamePage() {
   const [blobs, setBlobs] = useState<Blob[]>([]);
   const [pellets, setPellets] = useState<Pellet[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const smoothBlobsRef = useRef<Map<string, { x: number; y: number; mass: number }>>(new Map());
   const [gameEnd, setGameEnd] = useState<GameEndResult | null>(null);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
   const [gameId, setGameId] = useState<string>('');
@@ -63,6 +64,9 @@ export default function GamePage() {
   const [camera, setCamera] = useState({ x: 2500, y: 2500, zoom: 1 });
   const [gameStarted, setGameStarted] = useState(false);
   const [lobbyStatus, setLobbyStatus] = useState({ players: 1, max: 25, countdown: null as number | null });
+  const [isSpectator, setIsSpectator] = useState(false);
+  const [isEliminated, setIsEliminated] = useState(false);
+  const [followingPlayerId, setFollowingPlayerId] = useState<string>('');
 
   useEffect(() => {
     const playerId = localStorage.getItem('playerId');
@@ -75,8 +79,11 @@ export default function GamePage() {
       return;
     }
 
-    setMyPlayerId(playerId);
-    playerIdRef.current = playerId;
+    const spectatorMode = localStorage.getItem('spectatorMode') === 'true';
+    setIsSpectator(spectatorMode);
+
+    setMyPlayerId(playerId || 'spectator');
+    playerIdRef.current = playerId || 'spectator';
 
     // Connect to Socket.io
     const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
@@ -86,12 +93,20 @@ export default function GamePage() {
     socket.on('connect', () => {
       console.log('Connected to server');
       
-      // Try to reconnect to existing game first
-      if (existingGameId) {
+      if (spectatorMode) {
+        // Join as spectator
+        const lobbyId = `lobby_${tier}`;
+        socket.emit('spectateGame', { lobbyId });
+        setGameId(lobbyId);
+        setGameStarted(true);
+        socket.emit('join', lobbyId);
+        console.log('Joined as spectator');
+      } else if (existingGameId && playerId) {
+        // Try to reconnect to existing game
         console.log('Attempting to reconnect to game:', existingGameId);
         socket.emit('playerReconnect', { playerId, gameId: existingGameId });
-      } else {
-        // Join lobby
+      } else if (playerId && playerName) {
+        // Join lobby as player
         socket.emit('playerJoinLobby', { playerId, playerName, tier });
       }
     });
@@ -149,19 +164,25 @@ export default function GamePage() {
       setPellets(newPellets);
       setLeaderboard(newLeaderboard);
 
-      // Update camera to follow player
-      const myBlobs = newBlobs.filter((b: Blob) => b.playerId === playerId);
-      if (myBlobs.length > 0) {
-        const avgX = myBlobs.reduce((sum: number, b: Blob) => sum + b.x, 0) / myBlobs.length;
-        const avgY = myBlobs.reduce((sum: number, b: Blob) => sum + b.y, 0) / myBlobs.length;
-        const totalMass = myBlobs.reduce((sum: number, b: Blob) => sum + b.mass, 0);
+      const currentPlayerId = playerIdRef.current;
+
+      // Check if player is eliminated
+      if (!spectatorMode && currentPlayerId && currentPlayerId !== 'spectator') {
+        const myBlobs = newBlobs.filter((b: Blob) => b.playerId === currentPlayerId);
         
-        // Zoom out as mass increases (more mass = more zoom out)
-        // Starting mass 100 = zoom 1.0, mass 1000 = zoom 0.5, mass 10000 = zoom 0.2
-        const zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
-        
-        setCamera({ x: avgX, y: avgY, zoom });
+        if (myBlobs.length === 0 && newBlobs.length > 0) {
+          // Player eliminated, become spectator
+          console.log('Player eliminated, switching to spectator mode');
+          setIsEliminated(true);
+          setIsSpectator(true);
+          // Follow leader
+          if (leaderboard.length > 0) {
+            setFollowingPlayerId(leaderboard[0].id);
+          }
+        }
       }
+
+      // Update camera - moved to separate effect below for better control
     });
 
     socket.on('gameEnd', (result: GameEndResult) => {
@@ -170,16 +191,51 @@ export default function GamePage() {
       localStorage.removeItem('currentGameId'); // Clear game ID on end
     });
 
+    socket.on('lobbyCancelled', ({ message }) => {
+      alert(message);
+      localStorage.removeItem('currentGameId');
+      router.push('/');
+    });
+
     socket.on('error', ({ message }) => {
       console.error('Server error:', message);
       alert(message);
+      localStorage.removeItem('currentGameId');
       router.push('/');
     });
 
     return () => {
+      // Cleanup when leaving page
+      if (playerId && !localStorage.getItem('spectatorMode')) {
+        socket.emit('leaveLobby', { playerId });
+      }
       socket.disconnect();
+      localStorage.removeItem('currentGameId');
     };
   }, [router]);
+
+  // Update camera based on spectator mode or player position
+  useEffect(() => {
+    if (blobs.length === 0) return;
+
+    let targetPlayerId = myPlayerId;
+    
+    if (isSpectator || isEliminated) {
+      // Follow selected player or leader
+      targetPlayerId = followingPlayerId || (leaderboard.length > 0 ? leaderboard[0].id : '');
+    }
+
+    const followBlobs = blobs.filter((b: Blob) => b.playerId === targetPlayerId);
+    if (followBlobs.length > 0) {
+      const avgX = followBlobs.reduce((sum: number, b: Blob) => sum + b.x, 0) / followBlobs.length;
+      const avgY = followBlobs.reduce((sum: number, b: Blob) => sum + b.y, 0) / followBlobs.length;
+      const totalMass = followBlobs.reduce((sum: number, b: Blob) => sum + b.mass, 0);
+      
+      const zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
+      
+      setCamera({ x: avgX, y: avgY, zoom });
+    }
+  }, [blobs, followingPlayerId, isSpectator, isEliminated, myPlayerId, leaderboard]);
 
   // Track mouse position
   const mousePosRef = useRef({ x: 2500, y: 2500 });
@@ -221,8 +277,8 @@ export default function GamePage() {
       const socket = socketRef.current;
       const canvas = canvasRef.current;
       
-      // Only send if game has started
-      if (gameStartedRef.current && socket?.connected && gameIdRef.current && playerIdRef.current && canvas) {
+      // Only send if game has started AND not spectating/eliminated
+      if (!isSpectator && !isEliminated && gameStartedRef.current && socket?.connected && gameIdRef.current && playerIdRef.current && canvas) {
         // Calculate world position from screen position
         const cam = cameraRef.current;
         const screenPos = mouseScreenPosRef.current;
@@ -243,11 +299,14 @@ export default function GamePage() {
     return () => {
       clearInterval(interval);
     };
-  }, []); // Empty deps - runs once, never recreated
+  }, [isSpectator, isEliminated]); // Update when spectator state changes
 
   // Handle keyboard controls
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
+      // Don't allow controls if spectating or eliminated
+      if (isSpectator || isEliminated) return;
+      
       if (!socketRef.current || !gameIdRef.current || !playerIdRef.current) return;
       if (!canvasRef.current) return;
 
@@ -292,7 +351,7 @@ export default function GamePage() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, []);
+  }, [isSpectator, isEliminated]);
 
   // Canvas rendering loop
   useEffect(() => {
@@ -344,15 +403,28 @@ export default function GamePage() {
         ctx.fill();
       });
 
-      // Draw blobs
+      // Draw blobs with interpolation for smooth movement
       blobs.forEach(blob => {
+        // Get or create smooth position for this blob
+        let smooth = smoothBlobsRef.current.get(blob.id);
+        if (!smooth) {
+          smooth = { x: blob.x, y: blob.y, mass: blob.mass };
+          smoothBlobsRef.current.set(blob.id, smooth);
+        }
+
+        // Interpolate (lerp) toward server position for smooth movement
+        const lerpFactor = 0.3; // Higher = snappier, lower = smoother
+        smooth.x += (blob.x - smooth.x) * lerpFactor;
+        smooth.y += (blob.y - smooth.y) * lerpFactor;
+        smooth.mass += (blob.mass - smooth.mass) * lerpFactor;
+
         // Match server-side radius calculation (3x bigger)
-        const radius = Math.sqrt(blob.mass / Math.PI) * 3;
+        const radius = Math.sqrt(smooth.mass / Math.PI) * 3;
         
-        // Draw blob
+        // Draw blob at interpolated position
         ctx.fillStyle = blob.color;
         ctx.beginPath();
-        ctx.arc(blob.x, blob.y, radius, 0, Math.PI * 2);
+        ctx.arc(smooth.x, smooth.y, radius, 0, Math.PI * 2);
         ctx.fill();
 
         // Draw border
@@ -366,9 +438,17 @@ export default function GamePage() {
           ctx.fillStyle = '#fff';
           ctx.font = `${Math.max(12, 14 / camera.zoom)}px Arial`;
           ctx.textAlign = 'center';
-          ctx.fillText(player.name, blob.x, blob.y + radius + 20 / camera.zoom);
+          ctx.fillText(player.name, smooth.x, smooth.y + radius + 20 / camera.zoom);
         }
       });
+
+      // Clean up smooth positions for blobs that no longer exist
+      const currentBlobIds = new Set(blobs.map(b => b.id));
+      for (const [id] of smoothBlobsRef.current) {
+        if (!currentBlobIds.has(id)) {
+          smoothBlobsRef.current.delete(id);
+        }
+      }
 
       ctx.restore();
 
@@ -513,6 +593,16 @@ export default function GamePage() {
     );
   }
 
+  // Handle leave lobby
+  const leaveLobby = () => {
+    if (socketRef.current) {
+      socketRef.current.emit('leaveLobby', { playerId: myPlayerId });
+      socketRef.current.disconnect();
+    }
+    localStorage.removeItem('currentGameId');
+    router.push('/');
+  };
+
   // Show lobby waiting screen if game hasn't started
   if (!gameStarted) {
     return (
@@ -555,14 +645,61 @@ export default function GamePage() {
             <p>Controls:</p>
             <p className="mt-1">Move: Mouse • Split: SPACE • Eject: W</p>
           </div>
+
+          <button
+            onClick={leaveLobby}
+            className="mt-6 w-full py-3 bg-red-500/20 border border-red-500/50 hover:bg-red-500/30 rounded-lg text-red-400 font-bold transition-all"
+          >
+            Leave Lobby
+          </button>
         </div>
       </div>
     );
   }
 
+  // Spectator controls
+  const switchSpectatorTarget = () => {
+    if (leaderboard.length === 0) return;
+    
+    const currentIndex = leaderboard.findIndex(p => p.id === followingPlayerId);
+    const nextIndex = (currentIndex + 1) % leaderboard.length;
+    
+    const nextPlayer = leaderboard[nextIndex];
+    if (nextPlayer) {
+      console.log('Switching spectator to:', nextPlayer.name);
+      setFollowingPlayerId(nextPlayer.id);
+    }
+  };
+
   return (
     <div className="relative w-screen h-screen">
       <canvas ref={canvasRef} className="absolute inset-0" />
+      
+      {/* Spectator Indicator */}
+      {(isSpectator || isEliminated) && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-purple-500/80 backdrop-blur-sm rounded-lg px-6 py-3">
+          <div className="text-white font-bold">
+            {isEliminated ? '💀 Eliminated - Spectating' : '👁️ Spectator Mode'}
+          </div>
+          {followingPlayerId && (
+            <div className="text-sm text-purple-200">
+              Following: {leaderboard.find(p => p.id === followingPlayerId)?.name || 'Unknown'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Spectator Controls */}
+      {(isSpectator || isEliminated) && leaderboard.length > 1 && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2">
+          <button
+            onClick={switchSpectatorTarget}
+            className="px-4 py-2 bg-purple-500 hover:bg-purple-600 rounded-lg text-white font-bold transition-all"
+          >
+            Switch Player
+          </button>
+        </div>
+      )}
       
       {/* Controls Overlay - Mobile Only */}
       <div className="absolute bottom-8 right-8 flex gap-4 md:hidden">

@@ -27,17 +27,23 @@ export class LobbyManager {
     for (const mode of config.gameModes) {
       if (mode.locked) continue; // Skip Whale Mode for now
 
-      const lobby: Lobby = {
-        id: `lobby_${mode.tier}`,
-        tier: mode.tier,
-        players: new Map(),
-        status: 'waiting',
-        countdownStartTime: null,
-        gameStartTime: null,
-        maxPlayers: mode.maxPlayers,
-      };
+      const lobbyId = `lobby_${mode.tier}`;
+      
+      // Only create lobby if it doesn't exist
+      if (!this.lobbies.has(lobbyId)) {
+        const lobby: Lobby = {
+          id: lobbyId,
+          tier: mode.tier,
+          players: new Map(),
+          status: 'waiting',
+          countdownStartTime: null,
+          gameStartTime: null,
+          maxPlayers: mode.maxPlayers,
+        };
 
-      this.lobbies.set(lobby.id, lobby);
+        this.lobbies.set(lobbyId, lobby);
+        console.log(`Initialized lobby: ${lobbyId}`);
+      }
     }
   }
 
@@ -68,8 +74,16 @@ export class LobbyManager {
       return { success: false, message: 'Invalid game mode' };
     }
 
+    // If game is in progress, join as spectator instead
+    if (lobby.status === 'playing') {
+      const game = this.games.get(lobbyId);
+      if (game) {
+        return { success: false, message: 'Game in progress - spectating not yet implemented' };
+      }
+    }
+
     if (lobby.status !== 'waiting' && lobby.status !== 'countdown') {
-      return { success: false, message: 'Lobby is full or game in progress' };
+      return { success: false, message: 'Lobby not accepting players' };
     }
 
     if (lobby.players.size >= lobby.maxPlayers) {
@@ -222,20 +236,44 @@ export class LobbyManager {
 
     console.log(`Game ${game.id} started with ${lobby.players.size} players`);
 
-    // Clear lobby after game starts
-    setTimeout(() => {
-      this.resetLobby(lobby);
-    }, 1000);
+    // DON'T reset lobby - keep it in 'playing' status
+    // When game ends, we'll handle cleanup
   }
 
   /**
    * Reset lobby to waiting state
    */
-  private resetLobby(lobby: Lobby): void {
+  resetLobby(lobbyId: string): void {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return;
+
+    console.log(`Resetting lobby ${lobbyId} to waiting state`);
     lobby.players.clear();
     lobby.status = 'waiting';
     lobby.countdownStartTime = null;
     lobby.gameStartTime = null;
+    
+    // Broadcast update
+    this.broadcastSingleLobbyUpdate(lobby);
+  }
+
+  /**
+   * Handle game end
+   */
+  handleGameEnd(gameId: string): void {
+    const game = this.games.get(gameId);
+    if (!game) return;
+
+    console.log(`Game ${gameId} ended, cleaning up`);
+    
+    // Stop game
+    game.stop();
+    
+    // Remove from games map
+    this.games.delete(gameId);
+    
+    // Reset the lobby for this tier
+    this.resetLobby(gameId);
   }
 
   /**
@@ -246,21 +284,55 @@ export class LobbyManager {
   }
 
   /**
-   * Remove player from lobby
+   * Remove player from lobby by player ID
    */
   leaveLobby(playerId: string): void {
     for (const lobby of this.lobbies.values()) {
       if (lobby.players.has(playerId)) {
         lobby.players.delete(playerId);
-        console.log(`Player ${playerId} left lobby ${lobby.id}`);
+        console.log(`Player ${playerId} left lobby ${lobby.id} (${lobby.players.size}/${lobby.maxPlayers} remaining)`);
+
+        // Broadcast immediate update
+        this.broadcastSingleLobbyUpdate(lobby);
 
         // If in countdown and drops below minimum, cancel
         if (lobby.status === 'countdown' && lobby.players.size < config.lobby.minPlayers) {
           lobby.status = 'waiting';
           lobby.countdownStartTime = null;
           console.log(`Lobby ${lobby.id} countdown cancelled - below minimum`);
+          this.io.to(lobby.id).emit('lobbyCancelled', { message: 'Countdown cancelled - not enough players' });
         }
         break;
+      }
+    }
+  }
+
+  /**
+   * Handle socket disconnection - remove from lobby or game
+   */
+  handleDisconnect(socketId: string): void {
+    // Check lobbies
+    for (const lobby of this.lobbies.values()) {
+      for (const [playerId, player] of lobby.players.entries()) {
+        if (player.socketId === socketId) {
+          this.leaveLobby(playerId);
+          return;
+        }
+      }
+    }
+
+    // Check active games - eliminate player when they disconnect
+    for (const game of this.games.values()) {
+      for (const player of game.players.values()) {
+        if (player.socketId === socketId && !player.isBot) {
+          console.log(`Player ${player.name} disconnected from game ${game.id} - eliminating`);
+          
+          // Remove all blobs (eliminates player)
+          player.blobs = [];
+          player.stats.timeSurvived = (Date.now() - player.joinTime) / 1000;
+          
+          return;
+        }
       }
     }
   }
