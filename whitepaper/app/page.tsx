@@ -146,7 +146,7 @@ export default function Home() {
               Skill-Based GameFi on Solana
             </p>
             <p className="text-lg md:text-xl mb-12 text-gray-300 max-w-3xl mx-auto">
-              Competitive multiplayer game where players wager USDC and winners earn 80% of the pot.
+              Competitive multiplayer game where players wager USDC ($5-$100) and winners earn 80% of the pot.
               Deterministic gameplay with no random mechanics. Built on Solana blockchain.
             </p>
           </motion.div>
@@ -235,7 +235,7 @@ export default function Home() {
               <Coins className="w-12 h-12 text-neon-blue mb-4" />
               <h3 className="text-2xl font-bold mb-4 text-neon-blue">Winner-Takes-All Stakes</h3>
               <p className="text-gray-300 leading-relaxed">
-                Players pay USDC to enter lobbies (0.01, 0.1, or 0.5 USDC per game). Winner receives 80% 
+                Players pay USDC to enter lobbies ($5, $25, $50, or $100 per game). Winner receives 80% 
                 of the total pot. 15% goes to platform fees, 5% used for AGAR token buybacks. All transactions 
                 recorded on Solana blockchain. No random elements—outcome determined purely by player skill 
                 and strategy.
@@ -367,8 +367,7 @@ export default function Home() {
                 </div>
               </div>
               <p className="mt-6 text-gray-300 text-sm">
-                Every game drives token demand through automatic buybacks, creating a bullish flywheel
-                that benefits all token holders.
+                Example: 25-player $25 game = $625 pot → Winner: $500, Fees: $93.75, Buyback: $31.25
               </p>
             </motion.div>
 
@@ -640,7 +639,7 @@ export default function Home() {
                   '60fps Canvas rendering with vanilla JS physics',
                   'Socket.io real-time multiplayer (60Hz server tick)',
                   'Blob mechanics: eat, split, merge, eject pellets',
-                  'Three game modes (.01, .1, .5 USDC buy-ins)',
+                  'Four game modes ($5, $25, $50, $100 buy-ins)',
                   'Dynamic lobby system with auto-scaling',
                   'Mobile-optimized touch controls and responsive UI'
                 ]
