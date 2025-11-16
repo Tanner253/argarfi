@@ -16,6 +16,7 @@ export class GameRoom {
   gameStartTime: number;
   maxDuration: number;
   playerTargets: Map<string, Vector2>;
+  spectators: Set<string>; // Track spectator socket IDs
   
   constructor(id: string, tier: string, io: Server) {
     this.id = id;
@@ -28,6 +29,7 @@ export class GameRoom {
     this.gameStartTime = Date.now();
     this.maxDuration = config.game.maxGameDuration;
     this.playerTargets = new Map();
+    this.spectators = new Set();
     
     this.gameState = {
       players: this.players,
@@ -37,6 +39,29 @@ export class GameRoom {
     };
 
     this.initializePellets();
+  }
+
+  /**
+   * Add spectator
+   */
+  addSpectator(socketId: string): void {
+    this.spectators.add(socketId);
+    console.log(`Spectator added to ${this.id}. Total: ${this.spectators.size}`);
+  }
+
+  /**
+   * Remove spectator
+   */
+  removeSpectator(socketId: string): void {
+    this.spectators.delete(socketId);
+    console.log(`Spectator removed from ${this.id}. Total: ${this.spectators.size}`);
+  }
+
+  /**
+   * Get spectator count
+   */
+  getSpectatorCount(): number {
+    return this.spectators.size;
   }
 
   /**
@@ -443,10 +468,11 @@ export class GameRoom {
       return;
     }
 
-    // Time limit reached (30 minutes)
+    // Time limit reached (5 minutes)
     if (elapsed >= this.maxDuration) {
-      const winner = this.getLeaderboard()[0];
-      console.log(`Win condition: Time limit reached. Winner: ${winner?.name || 'None'}`);
+      const leaderboard = this.getLeaderboard();
+      const winner = leaderboard.length > 0 ? leaderboard[0] : null;
+      console.log(`Win condition: Time limit reached (${elapsed / 1000}s). Winner by mass: ${winner?.name || 'None'} (${winner?.mass || 0} mass)`);
       this.endGame(winner?.id || null);
       return;
     }
@@ -579,6 +605,7 @@ export class GameRoom {
       blobs,
       pellets: pelletsArray,
       leaderboard,
+      spectatorCount: this.spectators.size,
     });
   }
 

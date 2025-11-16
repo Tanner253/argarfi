@@ -51,16 +51,22 @@ export class LobbyManager {
    * Get all lobbies status
    */
   getLobbiesStatus() {
-    return Array.from(this.lobbies.values()).map(lobby => ({
-      id: lobby.id,
-      tier: lobby.tier,
-      playersCount: lobby.players.size,
-      maxPlayers: lobby.maxPlayers,
-      status: lobby.status,
-      countdown: lobby.countdownStartTime 
-        ? Math.max(0, config.lobby.autoStartCountdown - (Date.now() - lobby.countdownStartTime))
-        : null,
-    }));
+    return Array.from(this.lobbies.values()).map(lobby => {
+      const game = this.games.get(lobby.id);
+      const spectatorCount = game ? game.getSpectatorCount() : 0;
+      
+      return {
+        id: lobby.id,
+        tier: lobby.tier,
+        playersCount: lobby.players.size,
+        maxPlayers: lobby.maxPlayers,
+        status: lobby.status,
+        spectatorCount,
+        countdown: lobby.countdownStartTime 
+          ? Math.max(0, config.lobby.autoStartCountdown - (Date.now() - lobby.countdownStartTime))
+          : null,
+      };
+    });
   }
 
   /**
@@ -103,6 +109,18 @@ export class LobbyManager {
       socket.join(lobbyId);
     }
 
+    // If in countdown and autofill is on, replace a bot with this real player
+    let replacedBot = false;
+    if (lobby.status === 'countdown' && config.dev.autoFillBots) {
+      const bots = Array.from(lobby.players.values()).filter(p => p.isBot);
+      if (bots.length > 0) {
+        const botToRemove = bots[0];
+        lobby.players.delete(botToRemove.id);
+        console.log(`Replacing bot ${botToRemove.id} with real player ${playerName}`);
+        replacedBot = true;
+      }
+    }
+
     // Add player to lobby
     lobby.players.set(playerId, {
       id: playerId,
@@ -123,18 +141,25 @@ export class LobbyManager {
       isBot: false,
     });
 
-    console.log(`Player ${playerName} joined ${tier} lobby (${lobby.players.size}/${lobby.maxPlayers})`);
+    console.log(`Player ${playerName} joined ${tier} lobby (${lobby.players.size}/${lobby.maxPlayers})${replacedBot ? ' - replaced bot' : ''}`);
+
+    // Don't auto-fill bots if already in countdown (bots already filled)
+    if (lobby.status === 'countdown') {
+      // Just broadcast update
+      this.broadcastSingleLobbyUpdate(lobby);
+      return { success: true };
+    }
 
     // Immediately broadcast lobby update
     this.broadcastSingleLobbyUpdate(lobby);
 
-    // Check if we should start countdown
-    this.checkLobbyCountdown(lobby);
-
-    // Auto-fill bots in dev mode
-    if (config.dev.autoFillBots && lobby.players.size < config.lobby.minPlayers) {
+    // Auto-fill bots in dev mode to reach minimum
+    if (config.dev.autoFillBots && lobby.status === 'waiting' && lobby.players.size < config.lobby.minPlayers) {
       this.fillWithBots(lobby);
     }
+
+    // Check if we should start countdown (after bot fill)
+    this.checkLobbyCountdown(lobby);
 
     return { success: true };
   }
@@ -145,8 +170,10 @@ export class LobbyManager {
   private fillWithBots(lobby: Lobby): void {
     const needed = config.lobby.minPlayers - lobby.players.size;
     
+    if (needed <= 0) return;
+
     for (let i = 0; i < needed; i++) {
-      const botId = `bot_${Date.now()}_${i}`;
+      const botId = `bot_${Date.now()}_${Math.random()}`;
       const botName = `Bot ${i + 1}`;
 
       lobby.players.set(botId, {
@@ -169,37 +196,35 @@ export class LobbyManager {
       });
     }
 
-    console.log(`Filled ${lobby.tier} lobby with ${needed} bots`);
-    this.checkLobbyCountdown(lobby);
+    console.log(`Filled ${lobby.tier} lobby with ${needed} bot(s). Real players can replace bots during countdown.`);
   }
 
   /**
    * Check if lobby should start countdown
    */
   private checkLobbyCountdown(lobby: Lobby): void {
-    // Don't start countdown if game is already playing
-    if (lobby.status === 'playing') {
-      console.log(`Lobby ${lobby.id} already has active game - ignoring countdown check`);
+    // Don't start countdown if already in countdown or playing
+    if (lobby.status === 'countdown' || lobby.status === 'playing') {
       return;
     }
 
-    // In dev mode with MIN_PLAYERS_DEV=1, start immediately
-    if (lobby.status === 'waiting' && config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
-      console.log(`Dev mode: Starting game immediately with ${lobby.players.size} player(s)`);
-      this.startGame(lobby);
-      return;
-    }
-
+    // Start countdown when minimum players reached (bots or real)
     if (lobby.status === 'waiting' && lobby.players.size >= config.lobby.minPlayers) {
       lobby.status = 'countdown';
       lobby.countdownStartTime = Date.now();
 
-      console.log(`Lobby ${lobby.id} countdown started (${lobby.players.size}/${lobby.maxPlayers})`);
+      const realPlayers = Array.from(lobby.players.values()).filter(p => !p.isBot).length;
+      const botCount = lobby.players.size - realPlayers;
+      
+      console.log(`Lobby ${lobby.id} countdown started: ${realPlayers} real player(s), ${botCount} bot(s). Countdown: ${config.lobby.autoStartCountdown / 1000}s`);
 
-      // Start countdown timer
+      // Start countdown timer (120 seconds by default)
       setTimeout(() => {
         // Double-check lobby status before starting
         if (lobby.status === 'countdown') {
+          const finalReal = Array.from(lobby.players.values()).filter(p => !p.isBot).length;
+          const finalBots = lobby.players.size - finalReal;
+          console.log(`Starting game: ${finalReal} real player(s), ${finalBots} bot(s)`);
           this.startGame(lobby);
         } else {
           console.log(`Lobby ${lobby.id} countdown aborted - status changed to ${lobby.status}`);
@@ -280,6 +305,13 @@ export class LobbyManager {
     // Stop game
     game.stop();
     
+    // Remove all bots from BotManager
+    for (const player of game.players.values()) {
+      if (player.isBot) {
+        this.botManager.removeBot(player.id);
+      }
+    }
+    
     // Remove from games map
     this.games.delete(gameId);
     
@@ -312,12 +344,23 @@ export class LobbyManager {
         // Broadcast immediate update
         this.broadcastSingleLobbyUpdate(lobby);
 
-        // If in countdown and drops below minimum, cancel
+        // If in countdown and drops below minimum, cancel and remove bots
         if (lobby.status === 'countdown' && lobby.players.size < config.lobby.minPlayers) {
           lobby.status = 'waiting';
           lobby.countdownStartTime = null;
-          console.log(`Lobby ${lobby.id} countdown cancelled - below minimum`);
+          
+          // Remove all bots
+          const botsToRemove = Array.from(lobby.players.entries())
+            .filter(([_, p]) => p.isBot)
+            .map(([id, _]) => id);
+          
+          botsToRemove.forEach(botId => lobby.players.delete(botId));
+          
+          console.log(`Lobby ${lobby.id} countdown cancelled - removed ${botsToRemove.length} bots`);
           this.io.to(lobby.id).emit('lobbyCancelled', { message: 'Countdown cancelled - not enough players' });
+          
+          // Broadcast update
+          this.broadcastSingleLobbyUpdate(lobby);
         }
         break;
       }
@@ -340,6 +383,13 @@ export class LobbyManager {
 
     // Check active games - eliminate player when they disconnect
     for (const game of this.games.values()) {
+      // First check if this is a spectator
+      if (game.spectators.has(socketId)) {
+        game.removeSpectator(socketId);
+        return;
+      }
+
+      // Then check if this is a player
       for (const player of game.players.values()) {
         if (player.socketId === socketId && !player.isBot) {
           console.log(`Player ${player.name} disconnected from game ${game.id} - eliminating`);
@@ -371,12 +421,16 @@ export class LobbyManager {
       ? Math.max(0, Math.floor((config.lobby.autoStartCountdown - (Date.now() - lobby.countdownStartTime)) / 1000))
       : null;
 
+    const game = this.games.get(lobby.id);
+    const spectatorCount = game ? game.getSpectatorCount() : 0;
+
     const update = {
       tier: lobby.tier,
       playersLocked: lobby.players.size,
       maxPlayers: lobby.maxPlayers,
       status: lobby.status,
       countdown,
+      spectatorCount,
     };
 
     this.io.emit('lobbyUpdate', update); // Global for homepage

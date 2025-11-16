@@ -17,6 +17,7 @@ interface LobbyStatus {
   maxPlayers: number;
   status: string;
   countdown: number | null;
+  spectatorCount?: number;
 }
 
 export default function HomePage() {
@@ -143,9 +144,17 @@ export default function HomePage() {
                         {lobby.playersLocked}/{lobby.maxPlayers}
                       </span>
                     </div>
+                    {lobby.spectatorCount !== undefined && lobby.spectatorCount > 0 && (
+                      <div className="flex justify-between text-sm mb-2">
+                        <span className="text-gray-400">👁️ Spectators</span>
+                        <span className="text-purple-400 font-bold">
+                          {lobby.spectatorCount}
+                        </span>
+                      </div>
+                    )}
                     {lobby.countdown !== null && lobby.countdown > 0 && (
                       <div className="text-center py-2 bg-green-500/20 rounded text-green-400 font-bold">
-                        Starting in {lobby.countdown}s
+                        Starting in {Math.ceil(lobby.countdown / 1000)}s
                       </div>
                     )}
                     {lobby.status === 'playing' && (

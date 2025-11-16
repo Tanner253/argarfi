@@ -67,6 +67,7 @@ export default function GamePage() {
   const [isSpectator, setIsSpectator] = useState(false);
   const [isEliminated, setIsEliminated] = useState(false);
   const [followingPlayerId, setFollowingPlayerId] = useState<string>('');
+  const [spectatorCount, setSpectatorCount] = useState(0);
 
   useEffect(() => {
     const playerId = localStorage.getItem('playerId');
@@ -159,10 +160,13 @@ export default function GamePage() {
       localStorage.setItem('currentGameId', finalGameId);
     });
 
-    socket.on('gameState', ({ blobs: newBlobs, pellets: newPellets, leaderboard: newLeaderboard }) => {
+    socket.on('gameState', ({ blobs: newBlobs, pellets: newPellets, leaderboard: newLeaderboard, spectatorCount: specCount }) => {
       setBlobs(newBlobs);
       setPellets(newPellets);
       setLeaderboard(newLeaderboard);
+      if (specCount !== undefined) {
+        setSpectatorCount(specCount);
+      }
 
       const currentPlayerId = playerIdRef.current;
 
@@ -460,8 +464,9 @@ export default function GamePage() {
 
     const drawHUD = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
       // Leaderboard
+      const leaderboardHeight = Math.min(leaderboard.length * 30 + 80, 380);
       ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.fillRect(10, 10, 200, Math.min(leaderboard.length * 30 + 40, 340));
+      ctx.fillRect(10, 10, 200, leaderboardHeight);
       
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 16px Arial';
@@ -479,6 +484,16 @@ export default function GamePage() {
         ctx.fillStyle = '#4ECDC4';
         ctx.fillText(Math.floor(entry.mass).toString(), 160, y);
       });
+
+      // Spectator count
+      if (spectatorCount > 0) {
+        const spectatorY = 60 + Math.min(leaderboard.length, 10) * 30 + 15;
+        ctx.fillStyle = '#BB86FC';
+        ctx.font = '12px Arial';
+        ctx.fillText('👁️ Spectators', 20, spectatorY);
+        ctx.font = 'bold 16px Arial';
+        ctx.fillText(spectatorCount.toString(), 160, spectatorY);
+      }
 
       // Current mass
       const myMass = blobs

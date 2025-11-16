@@ -109,12 +109,15 @@ io.on('connection', (socket) => {
   // Spectate game
   socket.on('spectateGame', ({ lobbyId }) => {
     socket.join(lobbyId);
-    console.log(`Spectator joined ${lobbyId}`);
     
-    // Send immediate game state if game is running
+    // Add to spectators list
     const game = lobbyManager.getGame(lobbyId);
     if (game) {
+      game.addSpectator(socket.id);
       socket.emit('gameStart', { startTime: Date.now(), gameId: lobbyId });
+      console.log(`Spectator joined ${lobbyId}. Total spectators: ${game.getSpectatorCount()}`);
+    } else {
+      console.log(`Spectator tried to join ${lobbyId} but no game running`);
     }
   });
 
