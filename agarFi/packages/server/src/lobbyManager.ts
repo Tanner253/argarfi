@@ -177,6 +177,12 @@ export class LobbyManager {
    * Check if lobby should start countdown
    */
   private checkLobbyCountdown(lobby: Lobby): void {
+    // Don't start countdown if game is already playing
+    if (lobby.status === 'playing') {
+      console.log(`Lobby ${lobby.id} already has active game - ignoring countdown check`);
+      return;
+    }
+
     // In dev mode with MIN_PLAYERS_DEV=1, start immediately
     if (lobby.status === 'waiting' && config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
       console.log(`Dev mode: Starting game immediately with ${lobby.players.size} player(s)`);
@@ -192,7 +198,12 @@ export class LobbyManager {
 
       // Start countdown timer
       setTimeout(() => {
-        this.startGame(lobby);
+        // Double-check lobby status before starting
+        if (lobby.status === 'countdown') {
+          this.startGame(lobby);
+        } else {
+          console.log(`Lobby ${lobby.id} countdown aborted - status changed to ${lobby.status}`);
+        }
       }, config.lobby.autoStartCountdown);
     }
   }
@@ -284,10 +295,16 @@ export class LobbyManager {
   }
 
   /**
-   * Remove player from lobby by player ID
+   * Remove player from lobby by player ID (ONLY for lobby, not active games)
    */
   leaveLobby(playerId: string): void {
     for (const lobby of this.lobbies.values()) {
+      // Only remove from lobby if game hasn't started yet
+      if (lobby.status === 'playing') {
+        console.log(`Cannot leave lobby ${lobby.id} - game is already playing`);
+        continue; // Skip lobbies with active games
+      }
+
       if (lobby.players.has(playerId)) {
         lobby.players.delete(playerId);
         console.log(`Player ${playerId} left lobby ${lobby.id} (${lobby.players.size}/${lobby.maxPlayers} remaining)`);
