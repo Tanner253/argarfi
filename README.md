@@ -52,7 +52,7 @@ AgarFi is a competitive multiplayer game where players wager USDC and compete in
 ```
 1. Connect Wallet (x403 signature authentication)
    ↓
-2. Select Game Mode (0.01, 0.1, or 0.5 USDC)
+2. Select Game Mode ($5, $25, $50, or $100 USDC)
    ↓
 3. Join Lobby (minimum 10 players, maximum 25)
    ↓
@@ -69,14 +69,14 @@ AgarFi is a competitive multiplayer game where players wager USDC and compete in
 
 ### Prize Distribution
 
-For a 25-player game at 0.1 USDC each:
+For a 25-player game at $25 USDC each:
 
 | Recipient | Percentage | Amount (USDC) |
 |-----------|------------|---------------|
-| Winner | 80% | 2.00 |
-| Platform Fees | 15% | 0.375 |
-| AGAR Buyback | 5% | 0.125 |
-| **Total Pot** | **100%** | **2.50** |
+| Winner | 80% | $500.00 |
+| Platform Fees | 15% | $93.75 |
+| AGAR Buyback | 5% | $31.25 |
+| **Total Pot** | **100%** | **$625.00** |
 
 ---
 
@@ -140,7 +140,7 @@ AgarFi implements core Agar.io mechanics with these changes:
 |---------|------------------|--------|
 | Game Mode | Free-for-all, endless | Timed matches (30 min max) |
 | Objective | Reach top of leaderboard | Last alive OR highest mass wins |
-| Entry | Free to play | USDC buy-in (0.01/0.1/0.5) |
+| Entry | Free to play | USDC buy-in ($5/$25/$50/$100) |
 | Players | 100+ per server | 10-25 per match |
 | Rewards | Leaderboard fame | 80% of USDC pot |
 | Map Size | Varies by player count | Fixed 5000×5000 units |
@@ -376,7 +376,7 @@ Based on the [x402 open standard](https://x402.gitbook.io/x402):
 1. Client → Server: GET /api/join-lobby
 2. Server → Client: 402 Payment Required
    {
-     "amount": "0.1",
+     "amount": "25",
      "currency": "USDC",
      "recipient": "7xKXtg...",
      "network": "solana"
@@ -398,7 +398,7 @@ Based on the [x402 open standard](https://x402.gitbook.io/x402):
 // Server returns 402 status
 app.get('/api/join-lobby', (req, res) => {
   res.status(402).json({
-    amount: '0.1',
+    amount: '25',
     token: 'USDC',
     recipient: GAME_WALLET_ADDRESS,
     memo: generateGameId(),
