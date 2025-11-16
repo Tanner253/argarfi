@@ -97,6 +97,7 @@ export class GameRoom {
       splitTime: 0,
       canMerge: true,
       splitVelocity: { x: 0, y: 0 },
+      isMerging: false,
     };
 
     const player: Player = {
@@ -172,12 +173,8 @@ export class GameRoom {
     // Check win condition
     this.checkWinCondition();
 
-    // Broadcast state (full state every 500ms, deltas otherwise)
-    if (now % 500 < 20) {
-      this.broadcastFullState();
-    } else {
-      this.broadcastDeltaState();
-    }
+    // Broadcast state EVERY tick (60Hz) for smooth gameplay
+    this.broadcastFullState();
 
     // Respawn pellets
     this.respawnPellets();
@@ -193,9 +190,13 @@ export class GameRoom {
     const target = this.playerTargets.get(player.id);
     
     for (const blob of player.blobs) {
+      // Apply movement (15% slower if merging)
+      const moveSpeedMultiplier = blob.isMerging ? 0.85 : 1.0;
+      
       // Always apply normal movement toward mouse
       if (target) {
-        Physics.moveToward(blob, target.x, target.y, deltaTime);
+        const adjustedDeltaTime = deltaTime * moveSpeedMultiplier;
+        Physics.moveToward(blob, target.x, target.y, adjustedDeltaTime);
       }
 
       // Additionally check if blob has split launch velocity
@@ -203,8 +204,9 @@ export class GameRoom {
       
       if (launchSpeed > 5) {
         // Add split velocity on top of normal movement
-        blob.x += blob.splitVelocity.x * deltaTime;
-        blob.y += blob.splitVelocity.y * deltaTime;
+        const adjustedDeltaTime = deltaTime * moveSpeedMultiplier;
+        blob.x += blob.splitVelocity.x * adjustedDeltaTime;
+        blob.y += blob.splitVelocity.y * adjustedDeltaTime;
         
         // Decay split velocity smoothly
         const decay = 0.94; // 6% decay per tick = smoother slowdown
@@ -240,11 +242,12 @@ export class GameRoom {
   }
 
   /**
-   * Handle merging of same-player blobs
+   * Handle merging of same-player blobs with 0.5s animation
    */
   private handleMerging(): void {
     const now = Date.now();
     const MERGE_COOLDOWN = 30000; // 30 seconds
+    const MERGE_ANIMATION_TIME = 500; // 0.5 seconds
 
     for (const player of this.players.values()) {
       // Update merge eligibility
@@ -252,24 +255,44 @@ export class GameRoom {
         if (now - blob.splitTime > MERGE_COOLDOWN) {
           blob.canMerge = true;
         }
+
+        // Check if merge animation complete
+        if (blob.isMerging && blob.mergeStartTime) {
+          if (now - blob.mergeStartTime >= MERGE_ANIMATION_TIME) {
+            // Animation complete, actually merge
+            const targetBlob = player.blobs.find(b => b.id === blob.mergeTargetId);
+            if (targetBlob && !targetBlob.isMerging) {
+              targetBlob.mass += blob.mass;
+              player.blobs = player.blobs.filter(b => b.id !== blob.id);
+              console.log(`Merge animation complete for player ${player.name}`);
+            }
+          }
+        }
       }
 
-      // Merge blobs that are touching and can merge
+      // Start merge animations when blobs are 50% overlapped
       for (let i = 0; i < player.blobs.length; i++) {
         for (let j = i + 1; j < player.blobs.length; j++) {
           const blob1 = player.blobs[i];
           const blob2 = player.blobs[j];
 
+          // Skip if already merging
+          if (blob1.isMerging || blob2.isMerging) continue;
+
           if (blob1.canMerge && blob2.canMerge) {
             const r1 = Physics.calculateRadius(blob1.mass);
             const r2 = Physics.calculateRadius(blob2.mass);
+            const dist = Physics.distance(blob1.x, blob1.y, blob2.x, blob2.y);
 
-            if (Physics.checkCollision(blob1.x, blob1.y, r1, blob2.x, blob2.y, r2)) {
-              // Merge blob2 into blob1
-              blob1.mass += blob2.mass;
-              player.blobs.splice(j, 1);
-              j--; // Adjust index after removal
-              console.log(`Merged blobs for player ${player.name}`);
+            // Check for 50% overlap: distance < 50% of combined radii
+            const minOverlapDist = (r1 + r2) * 0.5;
+            
+            if (dist < minOverlapDist) {
+              // Start merge animation - blob2 merges into blob1
+              blob2.isMerging = true;
+              blob2.mergeTargetId = blob1.id;
+              blob2.mergeStartTime = now;
+              console.log(`Starting merge animation for player ${player.name} (${Math.floor((1 - dist/(r1+r2)) * 100)}% overlap)`);
             }
           }
         }
@@ -324,6 +347,11 @@ export class GameRoom {
    * Handle collision between same-player blobs (push apart)
    */
   private handleSamePlayerCollision(blob1: Blob, blob2: Blob): void {
+    // Skip collision if either blob is merging (let them pass through during merge animation)
+    if (blob1.isMerging || blob2.isMerging) {
+      return;
+    }
+
     const r1 = Physics.calculateRadius(blob1.mass);
     const r2 = Physics.calculateRadius(blob2.mass);
 
@@ -352,13 +380,20 @@ export class GameRoom {
    * Handle blob eating another blob
    */
   private handleBlobCollision(predator: Blob, prey: Blob): void {
+    // Skip if either blob is merging (invulnerable during merge animation)
+    if (predator.isMerging || prey.isMerging) return;
     
     const predatorRadius = Physics.calculateRadius(predator.mass);
     const preyRadius = Physics.calculateRadius(prey.mass);
 
     if (Physics.checkCollision(predator.x, predator.y, predatorRadius, prey.x, prey.y, preyRadius)) {
       if (Physics.canEat(predator.mass, prey.mass)) {
-        // Predator eats prey
+        // Mark prey as being eaten (for animation)
+        prey.isMerging = true;
+        prey.mergeTargetId = predator.id;
+        prey.mergeStartTime = Date.now();
+        
+        // Immediately transfer mass and remove (animation shown on client)
         predator.mass += prey.mass;
         
         // Update stats
@@ -376,6 +411,14 @@ export class GameRoom {
           if (preyPlayer.blobs.length === 0) {
             this.eliminatePlayer(prey.playerId);
             console.log(`Player ${preyPlayer.name} eliminated by ${predatorPlayer?.name || 'unknown'}`);
+            
+            // Broadcast elimination event for particle effects
+            this.io.to(this.id).emit('playerEliminated', {
+              eliminatedId: prey.playerId,
+              eliminatedBy: predator.playerId,
+              x: prey.x,
+              y: prey.y,
+            });
           }
         }
       }
@@ -570,8 +613,37 @@ export class GameRoom {
         x: Math.random() * config.game.mapWidth,
         y: Math.random() * config.game.mapHeight,
         mass: 1,
+        vx: 0,
+        vy: 0,
       };
       this.pellets.set(pellet.id, pellet);
+    }
+    
+    // Update ejected mass positions (apply velocity)
+    for (const pellet of this.pellets.values()) {
+      if (pellet.isEjected && pellet.vx !== undefined && pellet.vy !== undefined) {
+        const speed = Math.sqrt(pellet.vx ** 2 + pellet.vy ** 2);
+        
+        if (speed > 5) {
+          // Apply velocity to position
+          pellet.x += pellet.vx * (1 / config.server.tickRate);
+          pellet.y += pellet.vy * (1 / config.server.tickRate);
+          
+          // Decay velocity
+          const decay = 0.94;
+          pellet.vx *= decay;
+          pellet.vy *= decay;
+        } else {
+          // Velocity has decayed, become normal pellet
+          pellet.vx = 0;
+          pellet.vy = 0;
+          pellet.isEjected = false;
+        }
+        
+        // Clamp to map
+        pellet.x = Math.max(0, Math.min(config.game.mapWidth, pellet.x));
+        pellet.y = Math.max(0, Math.min(config.game.mapHeight, pellet.y));
+      }
     }
   }
 
@@ -585,18 +657,20 @@ export class GameRoom {
         blobs.push({
           id: blob.id,
           playerId: blob.playerId,
-          x: blob.x,
-          y: blob.y,
-          mass: blob.mass,
+          x: Math.round(blob.x * 10) / 10, // Round to 1 decimal for bandwidth
+          y: Math.round(blob.y * 10) / 10,
+          mass: Math.round(blob.mass * 10) / 10,
           velocity: blob.velocity,
           color: blob.color,
+          isMerging: blob.isMerging,
+          mergeTargetId: blob.mergeTargetId,
         });
       }
     }
 
     const pelletsArray = Array.from(this.pellets.values()).map(p => ({
-      x: p.x,
-      y: p.y,
+      x: Math.round(p.x),
+      y: Math.round(p.y),
     }));
 
     const leaderboard = this.getLeaderboard().slice(0, 10);
@@ -606,6 +680,7 @@ export class GameRoom {
       pellets: pelletsArray,
       leaderboard,
       spectatorCount: this.spectators.size,
+      serverTime: Date.now(), // For debugging sync
     });
   }
 
@@ -691,6 +766,7 @@ export class GameRoom {
           color: blob.color,
           splitTime: now,
           canMerge: false,
+          isMerging: false,
         };
         newBlobs.push(newBlob);
         
@@ -729,17 +805,31 @@ export class GameRoom {
           directionY = direction.y;
         }
 
+        // Add random angle spread (±30 degrees = ±0.524 radians)
+        const spreadAngle = (Math.random() - 0.5) * (Math.PI / 3); // ±30 degrees
+        const cos = Math.cos(spreadAngle);
+        const sin = Math.sin(spreadAngle);
+        
+        // Rotate direction vector by spread angle
+        const spreadDirX = directionX * cos - directionY * sin;
+        const spreadDirY = directionX * sin + directionY * cos;
+
         // Eject 10 mass
         blob.mass -= 10;
         
-        // Create pellet shooting toward mouse
-        const pellet: Pellet = {
+        // Create ejected mass with velocity (like split)
+        const ejectSpeed = 400; // High velocity like split
+        const ejectedMass: any = {
           id: `ejected_${Date.now()}_${Math.random()}`,
-          x: blob.x + directionX * 30,
-          y: blob.y + directionY * 30,
+          x: blob.x + spreadDirX * 30,
+          y: blob.y + spreadDirY * 30,
           mass: 10,
+          vx: spreadDirX * ejectSpeed,
+          vy: spreadDirY * ejectSpeed,
+          isEjected: true,
         };
-        this.pellets.set(pellet.id, pellet);
+        
+        this.pellets.set(ejectedMass.id, ejectedMass);
       }
     }
   }

@@ -23,6 +23,9 @@ export interface Blob {
   splitTime: number; // When this blob was created via split
   canMerge: boolean; // Can merge with other blobs from same player
   splitVelocity: Vector2; // Separate velocity for split launch
+  isMerging: boolean; // Currently in merge animation
+  mergeTargetId?: string; // ID of blob merging into
+  mergeStartTime?: number; // When merge animation started
 }
 
 export interface Player {
@@ -42,6 +45,9 @@ export interface Pellet {
   x: number;
   y: number;
   mass: number;
+  vx?: number; // Velocity for ejected mass
+  vy?: number;
+  isEjected?: boolean;
 }
 
 export interface GameConfig {

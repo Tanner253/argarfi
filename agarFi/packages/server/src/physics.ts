@@ -73,13 +73,25 @@ export class Physics {
       y: targetY - blob.y,
     };
 
+    const distance = Math.sqrt(direction.x * direction.x + direction.y * direction.y);
+    
+    // Only move if target is far enough (prevents jitter when close)
+    if (distance < 5) {
+      return; // Don't move if already very close to target
+    }
+
     // Get direction (normalized)
     const normalized = this.normalize(direction);
     const speed = this.calculateSpeed(blob.mass);
 
-    // Always move in that direction, regardless of distance to target
-    blob.velocity.x = normalized.x * speed;
-    blob.velocity.y = normalized.y * speed;
+    // Smoothly adjust velocity toward target direction
+    const targetVelX = normalized.x * speed;
+    const targetVelY = normalized.y * speed;
+    
+    // Smooth velocity change (prevents instant direction changes)
+    const velocityLerp = 0.7; // Smooth but responsive
+    blob.velocity.x += (targetVelX - blob.velocity.x) * velocityLerp;
+    blob.velocity.y += (targetVelY - blob.velocity.y) * velocityLerp;
 
     // Update position
     blob.x += blob.velocity.x * deltaTime;

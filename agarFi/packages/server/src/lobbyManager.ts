@@ -175,16 +175,23 @@ export class LobbyManager {
   }
 
   /**
-   * Fill lobby with bots for testing
+   * Fill lobby with bots for testing (max 10 bots)
    */
   private fillWithBots(lobby: Lobby): void {
-    const needed = config.lobby.minPlayers - lobby.players.size;
+    const MAX_BOTS = 10;
+    const currentBots = Array.from(lobby.players.values()).filter(p => p.isBot).length;
+    const realPlayers = lobby.players.size - currentBots;
     
-    if (needed <= 0) return;
+    // Calculate how many bots needed to reach minimum players (but max 10 bots total)
+    const targetTotal = Math.max(config.lobby.minPlayers, realPlayers);
+    const botsNeeded = Math.min(targetTotal - realPlayers, MAX_BOTS - currentBots);
+    
+    if (botsNeeded <= 0) return;
 
-    for (let i = 0; i < needed; i++) {
+    for (let i = 0; i < botsNeeded; i++) {
       const botId = `bot_${Date.now()}_${Math.random()}`;
-      const botName = `Bot ${i + 1}`;
+      const botNumber = currentBots + i + 1;
+      const botName = `Bot ${botNumber}`;
 
       lobby.players.set(botId, {
         id: botId,
@@ -206,7 +213,8 @@ export class LobbyManager {
       });
     }
 
-    console.log(`Filled ${lobby.tier} lobby with ${needed} bot(s). Real players can replace bots during countdown.`);
+    const totalBots = currentBots + botsNeeded;
+    console.log(`Added ${botsNeeded} bot(s) to ${lobby.tier} lobby (${totalBots}/${MAX_BOTS} max bots, ${lobby.players.size}/${lobby.maxPlayers} total)`);
   }
 
   /**

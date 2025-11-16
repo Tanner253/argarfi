@@ -12,6 +12,8 @@ interface Blob {
   mass: number;
   velocity: { x: number; y: number };
   color: string;
+  isMerging?: boolean;
+  mergeTargetId?: string;
 }
 
 interface Pellet {
@@ -56,7 +58,6 @@ export default function GamePage() {
   const [blobs, setBlobs] = useState<Blob[]>([]);
   const [pellets, setPellets] = useState<Pellet[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const smoothBlobsRef = useRef<Map<string, { x: number; y: number; mass: number }>>(new Map());
   const [gameEnd, setGameEnd] = useState<GameEndResult | null>(null);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
   const [gameId, setGameId] = useState<string>('');
@@ -68,6 +69,7 @@ export default function GamePage() {
   const [isEliminated, setIsEliminated] = useState(false);
   const [followingPlayerId, setFollowingPlayerId] = useState<string>('');
   const [spectatorCount, setSpectatorCount] = useState(0);
+  const [particles, setParticles] = useState<Array<{ x: number; y: number; vx: number; vy: number; color: string; life: number }>>([]);
 
   useEffect(() => {
     const playerId = localStorage.getItem('playerId');
@@ -189,6 +191,26 @@ export default function GamePage() {
       // Update camera - moved to separate effect below for better control
     });
 
+    socket.on('playerEliminated', ({ eliminatedId, eliminatedBy, x, y }: any) => {
+      console.log('Player eliminated:', eliminatedId);
+      
+      // Create particle explosion
+      const newParticles = [];
+      for (let i = 0; i < 20; i++) {
+        const angle = (Math.PI * 2 * i) / 20;
+        const speed = 100 + Math.random() * 100;
+        newParticles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          color: ['#FF6B6B', '#FFD700', '#FF10F0', '#00F0FF'][Math.floor(Math.random() * 4)],
+          life: 1,
+        });
+      }
+      setParticles(prev => [...prev, ...newParticles]);
+    });
+
     socket.on('gameEnd', (result: GameEndResult) => {
       console.log('Game ended:', result);
       setGameEnd(result);
@@ -298,7 +320,7 @@ export default function GamePage() {
           gameId: gameIdRef.current,
         });
       }
-    }, 50); // Send position 20 times per second
+    }, 16); // Send position 60 times per second (match server tick rate)
 
     return () => {
       clearInterval(interval);
@@ -383,76 +405,106 @@ export default function GamePage() {
       ctx.scale(camera.zoom, camera.zoom);
       ctx.translate(-camera.x, -camera.y);
 
-      // Draw grid
+      // Draw grid (less frequently for better performance)
       ctx.strokeStyle = '#333';
       ctx.lineWidth = 1 / camera.zoom;
-      for (let x = 0; x <= 5000; x += 100) {
+      const gridSpacing = 250; // Larger spacing = better performance
+      for (let x = 0; x <= 5000; x += gridSpacing) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, 5000);
         ctx.stroke();
       }
-      for (let y = 0; y <= 5000; y += 100) {
+      for (let y = 0; y <= 5000; y += gridSpacing) {
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(5000, y);
         ctx.stroke();
       }
 
-      // Draw pellets
+      // Draw pellets as diamonds (50% bigger)
       pellets.forEach(pellet => {
         ctx.fillStyle = '#4ECDC4';
         ctx.beginPath();
-        ctx.arc(pellet.x, pellet.y, 2, 0, Math.PI * 2);
+        const size = 3; // 50% bigger than 2
+        // Diamond shape
+        ctx.moveTo(pellet.x, pellet.y - size);
+        ctx.lineTo(pellet.x + size, pellet.y);
+        ctx.lineTo(pellet.x, pellet.y + size);
+        ctx.lineTo(pellet.x - size, pellet.y);
+        ctx.closePath();
         ctx.fill();
       });
 
-      // Draw blobs with interpolation for smooth movement
+      // Draw blobs - NO interpolation, render server position directly
       blobs.forEach(blob => {
-        // Get or create smooth position for this blob
-        let smooth = smoothBlobsRef.current.get(blob.id);
-        if (!smooth) {
-          smooth = { x: blob.x, y: blob.y, mass: blob.mass };
-          smoothBlobsRef.current.set(blob.id, smooth);
+        // If merging, pull toward target
+        let renderX = blob.x;
+        let renderY = blob.y;
+        
+        if (blob.isMerging && blob.mergeTargetId) {
+          const targetBlob = blobs.find(b => b.id === blob.mergeTargetId);
+          if (targetBlob) {
+            // Pull toward merge target during animation
+            renderX += (targetBlob.x - blob.x) * 0.3;
+            renderY += (targetBlob.y - blob.y) * 0.3;
+          }
         }
 
-        // Interpolate (lerp) toward server position for smooth movement
-        const lerpFactor = 0.3; // Higher = snappier, lower = smoother
-        smooth.x += (blob.x - smooth.x) * lerpFactor;
-        smooth.y += (blob.y - smooth.y) * lerpFactor;
-        smooth.mass += (blob.mass - smooth.mass) * lerpFactor;
-
         // Match server-side radius calculation (3x bigger)
-        const radius = Math.sqrt(smooth.mass / Math.PI) * 3;
+        const radius = Math.sqrt(blob.mass / Math.PI) * 3;
         
-        // Draw blob at interpolated position
+        // Draw blob at server position (or merge position)
         ctx.fillStyle = blob.color;
+        
+        // Add pulsing effect if merging
+        if (blob.isMerging) {
+          ctx.globalAlpha = 0.7 + Math.sin(Date.now() / 100) * 0.3;
+        }
+        
         ctx.beginPath();
-        ctx.arc(smooth.x, smooth.y, radius, 0, Math.PI * 2);
+        ctx.arc(renderX, renderY, radius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.globalAlpha = 1;
 
         // Draw border
-        ctx.strokeStyle = blob.playerId === myPlayerId ? '#FFD700' : '#333';
-        ctx.lineWidth = 3 / camera.zoom;
+        ctx.strokeStyle = blob.playerId === myPlayerId ? '#FFD700' : blob.isMerging ? '#BB86FC' : '#333';
+        ctx.lineWidth = blob.isMerging ? 4 / camera.zoom : 3 / camera.zoom;
         ctx.stroke();
 
         // Draw player name
         const player = leaderboard.find(p => p.id === blob.playerId);
-        if (player) {
+        if (player && !blob.isMerging) {
           ctx.fillStyle = '#fff';
           ctx.font = `${Math.max(12, 14 / camera.zoom)}px Arial`;
           ctx.textAlign = 'center';
-          ctx.fillText(player.name, smooth.x, smooth.y + radius + 20 / camera.zoom);
+          ctx.fillText(player.name, renderX, renderY + radius + 20 / camera.zoom);
         }
       });
 
-      // Clean up smooth positions for blobs that no longer exist
-      const currentBlobIds = new Set(blobs.map(b => b.id));
-      Array.from(smoothBlobsRef.current.keys()).forEach(id => {
-        if (!currentBlobIds.has(id)) {
-          smoothBlobsRef.current.delete(id);
+      // Draw particles
+      ctx.save();
+      particles.forEach((particle, idx) => {
+        if (particle.life > 0) {
+          ctx.fillStyle = particle.color;
+          ctx.globalAlpha = particle.life;
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          
+          // Update particle
+          particle.x += particle.vx * 0.016;
+          particle.y += particle.vy * 0.016;
+          particle.vx *= 0.98;
+          particle.vy *= 0.98;
+          particle.life -= 0.02;
         }
       });
+      ctx.restore();
+
+      // Remove dead particles
+      setParticles(prev => prev.filter(p => p.life > 0));
 
       ctx.restore();
 
@@ -463,51 +515,94 @@ export default function GamePage() {
     };
 
     const drawHUD = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-      // Leaderboard
-      const leaderboardHeight = Math.min(leaderboard.length * 30 + 80, 380);
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.fillRect(10, 10, 200, leaderboardHeight);
+      // Leaderboard with neon theme
+      const leaderboardHeight = Math.min(leaderboard.length * 32 + 90, 400);
       
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 16px Arial';
+      // Background with glow
+      ctx.fillStyle = 'rgba(10, 14, 39, 0.85)'; // cyber-dark
+      ctx.fillRect(10, 10, 220, leaderboardHeight);
+      
+      // Border (no glow)
+      ctx.strokeStyle = '#39FF14'; // neon-green
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, 10, 220, leaderboardHeight);
+      
+      // Title
+      ctx.fillStyle = '#39FF14';
+      ctx.font = 'bold 18px Arial';
       ctx.textAlign = 'left';
-      ctx.fillText('Leaderboard', 20, 35);
+      ctx.fillText('LEADERBOARD', 20, 38);
 
+      // Leaderboard entries
       leaderboard.slice(0, 10).forEach((entry, i) => {
-        const y = 60 + i * 30;
+        const y = 68 + i * 32;
         const isMe = entry.id === myPlayerId;
         
+        // Rank number
+        ctx.fillStyle = isMe ? '#FFD700' : '#00F0FF'; // neon-blue
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText(`${i + 1}.`, 20, y);
+        
+        // Player name
         ctx.fillStyle = isMe ? '#FFD700' : '#fff';
         ctx.font = isMe ? 'bold 14px Arial' : '14px Arial';
-        ctx.fillText(`${i + 1}. ${entry.name}`, 20, y);
+        ctx.fillText(entry.name, 45, y);
         
-        ctx.fillStyle = '#4ECDC4';
-        ctx.fillText(Math.floor(entry.mass).toString(), 160, y);
+        // Mass
+        ctx.fillStyle = '#39FF14'; // neon-green
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.floor(entry.mass).toString(), 210, y);
+        ctx.textAlign = 'left';
       });
 
-      // Spectator count
+      // Spectator count with purple
       if (spectatorCount > 0) {
-        const spectatorY = 60 + Math.min(leaderboard.length, 10) * 30 + 15;
-        ctx.fillStyle = '#BB86FC';
+        const spectatorY = 68 + Math.min(leaderboard.length, 10) * 32 + 15;
+        ctx.fillStyle = '#BC13FE'; // neon-purple
         ctx.font = '12px Arial';
         ctx.fillText('👁️ Spectators', 20, spectatorY);
         ctx.font = 'bold 16px Arial';
-        ctx.fillText(spectatorCount.toString(), 160, spectatorY);
+        ctx.textAlign = 'right';
+        ctx.fillText(spectatorCount.toString(), 210, spectatorY);
+        ctx.textAlign = 'left';
       }
 
-      // Current mass
+      // Current mass display (neon theme)
       const myMass = blobs
         .filter(b => b.playerId === myPlayerId)
         .reduce((sum, b) => sum + b.mass, 0);
 
       if (myMass > 0) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(canvas.width - 210, 10, 200, 60);
+        const massBoxWidth = 200;
+        const massBoxX = canvas.width - massBoxWidth - 10;
         
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 24px Arial';
-        ctx.textAlign = 'right';
-        ctx.fillText(`Mass: ${Math.floor(myMass)}`, canvas.width - 20, 45);
+        // Background
+        ctx.fillStyle = 'rgba(10, 14, 39, 0.85)'; // cyber-dark
+        ctx.fillRect(massBoxX, 10, massBoxWidth, 70);
+        
+        // Border (subtle glow)
+        ctx.strokeStyle = '#00F0FF';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = '#00F0FF';
+        ctx.shadowBlur = 5;
+        ctx.strokeRect(massBoxX, 10, massBoxWidth, 70);
+        ctx.shadowBlur = 0;
+        
+        // Label
+        ctx.fillStyle = '#00F0FF';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('YOUR MASS', canvas.width - 110, 32);
+        
+        // Mass value (minimal glow)
+        ctx.fillStyle = '#39FF14';
+        ctx.font = 'bold 28px Arial';
+        ctx.shadowColor = '#39FF14';
+        ctx.shadowBlur = 5;
+        ctx.fillText(Math.floor(myMass).toString(), canvas.width - 110, 62);
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'left';
       }
     };
 
@@ -690,29 +785,38 @@ export default function GamePage() {
     <div className="relative w-screen h-screen">
       <canvas ref={canvasRef} className="absolute inset-0" />
       
-      {/* Spectator Indicator */}
+      {/* Spectator UI - Top center, compact */}
       {(isSpectator || isEliminated) && (
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-purple-500/80 backdrop-blur-sm rounded-lg px-6 py-3">
-          <div className="text-white font-bold">
-            {isEliminated ? '💀 Eliminated - Spectating' : '👁️ Spectator Mode'}
-          </div>
-          {followingPlayerId && (
-            <div className="text-sm text-purple-200">
-              Following: {leaderboard.find(p => p.id === followingPlayerId)?.name || 'Unknown'}
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50">
+          <div className="bg-purple-600/90 backdrop-blur-md rounded-lg px-4 py-2 shadow-lg border border-purple-400/50 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-white font-bold text-sm">
+                {isEliminated ? '💀 Eliminated' : '👁️'}
+              </span>
+              {followingPlayerId && (
+                <span className="text-purple-100 text-sm">
+                  Following: <span className="font-bold text-white">{leaderboard.find(p => p.id === followingPlayerId)?.name || '...'}</span>
+                </span>
+              )}
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Spectator Controls */}
-      {(isSpectator || isEliminated) && leaderboard.length > 1 && (
-        <div className="absolute top-20 left-1/2 transform -translate-x-1/2">
-          <button
-            onClick={switchSpectatorTarget}
-            className="px-4 py-2 bg-purple-500 hover:bg-purple-600 rounded-lg text-white font-bold transition-all"
-          >
-            Switch Player
-          </button>
+            
+            <div className="flex gap-2">
+              {leaderboard.length > 1 && (
+                <button
+                  onClick={switchSpectatorTarget}
+                  className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded text-white text-xs font-bold transition-all"
+                >
+                  ⏭️
+                </button>
+              )}
+              <button
+                onClick={leaveLobby}
+                className="px-3 py-1 bg-gray-900/60 hover:bg-gray-800 rounded text-white text-xs font-bold transition-all"
+              >
+                🏠
+              </button>
+            </div>
+          </div>
         </div>
       )}
       
@@ -764,18 +868,24 @@ export default function GamePage() {
         </button>
       </div>
 
-      {/* Keyboard Controls Info */}
-      <div className="absolute top-4 right-4 bg-black/50 backdrop-blur-sm rounded-lg p-3 text-sm hidden md:block">
-        <div className="text-gray-300">
-          <div><kbd className="bg-gray-700 px-2 py-1 rounded">SPACE</kbd> Split</div>
-          <div className="mt-1"><kbd className="bg-gray-700 px-2 py-1 rounded">W</kbd> Eject</div>
+      {/* Keyboard Controls Info - Neon Theme */}
+      <div className="absolute top-24 right-4 bg-cyber-dark/90 backdrop-blur-md rounded-lg p-3 text-sm hidden md:block shadow-lg shadow-neon-blue/20 border-2 border-neon-blue/40">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <kbd className="bg-neon-green/20 px-3 py-1 rounded font-mono font-bold text-neon-green border border-neon-green/40">SPACE</kbd>
+            <span className="text-gray-300">Split</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <kbd className="bg-neon-blue/20 px-3 py-1 rounded font-mono font-bold text-neon-blue border border-neon-blue/40">W</kbd>
+            <span className="text-gray-300">Eject</span>
+          </div>
         </div>
       </div>
 
       {/* Minimap - Development Tool */}
-      <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm rounded-lg p-3">
-        <div className="text-xs text-gray-400 mb-2">Minimap (Dev)</div>
-        <div className="relative w-48 h-48 bg-gray-900 border border-gray-700">
+      <div className="absolute bottom-4 left-4 bg-cyber-dark/90 backdrop-blur-md rounded-lg p-3 border-2 border-neon-purple/40 shadow-lg shadow-neon-purple/20">
+        <div className="text-xs text-neon-purple font-bold mb-2">MINIMAP</div>
+        <div className="relative w-48 h-48 bg-cyber-darker border-2 border-neon-purple/30">
           {/* Map boundaries */}
           <div className="absolute inset-0">
             {/* Players */}
