@@ -14,12 +14,26 @@ import {
   Target,
   Sparkles,
   Rocket,
-  Github
+  Github,
+  Copy,
+  Check
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [copied, setCopied] = useState(false);
+  const CONTRACT_ADDRESS = '6WQxQRguwYVwrHpFkNJsLK2XRnWLuqaLuQ8VBGXupump';
+
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(CONTRACT_ADDRESS);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -177,21 +191,44 @@ export default function Home() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.6, duration: 0.8 }}
-            className="flex flex-col sm:flex-row gap-8 justify-center items-center"
+            className="flex flex-col gap-8 justify-center items-center max-w-4xl mx-auto"
           >
-            <div className="flex items-center gap-3">
-              <Coins className="w-8 h-8 text-neon-green" />
-              <div className="text-left">
-                <p className="text-sm text-gray-400">Token Ticker</p>
-                <p className="text-xl font-bold text-neon-green">TBA</p>
+            <div className="flex flex-col sm:flex-row gap-8 justify-center items-center w-full">
+              <div className="flex items-center gap-3">
+                <Coins className="w-8 h-8 text-neon-green" />
+                <div className="text-left">
+                  <p className="text-sm text-gray-400">Token Ticker</p>
+                  <p className="text-xl font-bold text-neon-green">$AgarFi</p>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <Wallet className="w-8 h-8 text-neon-blue" />
-              <div className="text-left">
-                <p className="text-sm text-gray-400">Contract Address</p>
-                <p className="text-xl font-bold text-neon-blue">Coming Soon</p>
+            
+            <div className="w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-blue/50 rounded-xl p-6">
+              <div className="flex items-start gap-3 mb-3">
+                <Wallet className="w-6 h-6 text-neon-blue mt-1" />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-400 mb-2">Contract Address</p>
+                  <p className="text-sm md:text-base text-neon-blue font-mono break-all">
+                    {CONTRACT_ADDRESS}
+                  </p>
+                </div>
               </div>
+              <button
+                onClick={copyToClipboard}
+                className="w-full mt-4 px-4 py-3 bg-neon-blue/20 hover:bg-neon-blue/30 border border-neon-blue/50 text-neon-blue font-bold rounded-lg transition-all flex items-center justify-center gap-2 hover:scale-105"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-5 h-5" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-5 h-5" />
+                    Copy Address
+                  </>
+                )}
+              </button>
             </div>
           </motion.div>
         </div>
