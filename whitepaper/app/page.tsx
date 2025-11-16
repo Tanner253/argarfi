@@ -142,11 +142,11 @@ export default function Home() {
               AgarFi
             </h1>
             <p className="text-2xl md:text-4xl mb-4 text-neon-green text-glow">
-              The First Truly Skill-Based GameFi
+              Skill-Based GameFi on Solana
             </p>
             <p className="text-lg md:text-xl mb-12 text-gray-300 max-w-3xl mx-auto">
-              Play, compete, and earn real USDC in the world's first skill-based blockchain game.
-              No luck. No house edge. Pure skill. Pure profit.
+              Competitive multiplayer game where players wager USDC and winners earn 80% of the pot.
+              Deterministic gameplay with no random mechanics. Built on Solana blockchain.
             </p>
           </motion.div>
 
@@ -164,9 +164,12 @@ export default function Home() {
             >
               Join Waitlist
             </a>
-            <button className="px-8 py-4 border-2 border-neon-blue text-neon-blue font-bold text-lg rounded-lg hover:bg-neon-blue hover:text-black transition-all">
+            <a 
+              href="#about"
+              className="px-8 py-4 border-2 border-neon-blue text-neon-blue font-bold text-lg rounded-lg hover:bg-neon-blue hover:text-black transition-all text-center"
+            >
               Read Whitepaper
-            </button>
+            </a>
           </motion.div>
 
           <motion.div
@@ -213,11 +216,12 @@ export default function Home() {
               className="bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-8"
             >
               <Gamepad2 className="w-12 h-12 text-neon-green mb-4" />
-              <h3 className="text-2xl font-bold mb-4 text-neon-green">Classic Gameplay</h3>
+              <h3 className="text-2xl font-bold mb-4 text-neon-green">How the Game Works</h3>
               <p className="text-gray-300 leading-relaxed">
-                Remember Agar.io? The addictive multiplayer game where you eat pellets, grow bigger,
-                and consume other players? AgarFi brings back that rush, but with a revolutionary twist:
-                your skills now earn you real money.
+                AgarFi is based on Agar.io, a 2015 browser game where players control circular cells ("blobs") 
+                on a 2D map. You start small and grow by consuming food pellets and smaller players. Larger 
+                players move slower. You can split your mass to catch opponents or eject mass to escape. 
+                Last player standing or largest mass after 30 minutes wins.
               </p>
             </motion.div>
 
@@ -228,11 +232,12 @@ export default function Home() {
               className="bg-cyber-dark/50 backdrop-blur-lg border border-neon-blue/30 rounded-2xl p-8"
             >
               <Coins className="w-12 h-12 text-neon-blue mb-4" />
-              <h3 className="text-2xl font-bold mb-4 text-neon-blue">Real Stakes</h3>
+              <h3 className="text-2xl font-bold mb-4 text-neon-blue">Winner-Takes-All Stakes</h3>
               <p className="text-gray-300 leading-relaxed">
-                Enter games with USDC buy-ins (.01, .1, or .5). The winner takes 80% of the pot.
-                No random loot boxes. No pay-to-win. Just pure skill-based competition with transparent,
-                blockchain-verified payouts.
+                Players pay USDC to enter lobbies (0.01, 0.1, or 0.5 USDC per game). Winner receives 80% 
+                of the total pot. 15% goes to platform fees, 5% used for AGAR token buybacks. All transactions 
+                recorded on Solana blockchain. No random elements—outcome determined purely by player skill 
+                and strategy.
               </p>
             </motion.div>
           </div>
@@ -244,12 +249,15 @@ export default function Home() {
             className="text-center max-w-4xl mx-auto"
           >
             <p className="text-xl text-gray-300 leading-relaxed mb-6">
-              AgarFi isn't gambling. It's competitive gaming with real rewards. Every match is decided by
-              strategy, reflexes, and split-second decisions. The best players rise to the top and earn
-              real money while doing it.
+              Gameplay mechanics are deterministic with server-authoritative physics running at 60Hz tick rate. 
+              Movement speed is inversely proportional to mass. Cell splitting follows predictable trajectories. 
+              No random number generation (RNG) affects outcomes. Win conditions based on survival time and total 
+              mass accumulated—both direct results of player decisions.
             </p>
-            <p className="text-2xl font-bold gradient-text">
-              Finally, a skill-based game to earn money on Web3. 🚀
+            <p className="text-lg text-gray-300">
+              <span className="font-bold gradient-text">Technical Architecture:</span> Real-time multiplayer 
+              via Socket.io, blockchain settlements via Solana Web3.js, authentication via x403 signatures, 
+              payments via x402 HTTP protocol.
             </p>
           </motion.div>
         </div>
@@ -264,7 +272,7 @@ export default function Home() {
             viewport={{ once: true }}
             className="text-5xl md:text-6xl font-bold text-center mb-16 gradient-text"
           >
-            Why AgarFi is Bullish
+            Technical Features
           </motion.h2>
 
           <div className="grid md:grid-cols-3 gap-8">
@@ -272,38 +280,38 @@ export default function Home() {
               {
                 icon: Shield,
                 color: 'neon-green',
-                title: 'Anti-Bot Security',
-                description: 'x403 wallet authentication ensures every player is human. No bots, no cheating, just fair competition.'
+                title: 'x403 Authentication',
+                description: 'Wallet signature-based authentication. Each lobby join requires cryptographic proof of wallet ownership via message signing.'
               },
               {
                 icon: Zap,
                 color: 'neon-blue',
-                title: '60Hz Gameplay',
-                description: 'Silky-smooth 60fps performance with server-authoritative physics. Feel every move with zero lag.'
+                title: '60Hz Server Tick Rate',
+                description: 'Server-authoritative physics updates 60 times per second. Client-side prediction reduces perceived latency.'
               },
               {
                 icon: Users,
                 color: 'neon-purple',
-                title: 'Unlimited Scale',
-                description: 'Dynamic lobbies automatically scale to support 100+ concurrent players. The more who play, the bigger the pots.'
+                title: 'Dynamic Lobbies',
+                description: 'Auto-scaling lobby system. Minimum 10 players to start, maximum 25 players per game. Multiple concurrent lobbies supported.'
               },
               {
                 icon: Lock,
                 color: 'neon-pink',
-                title: 'Transparent Pots',
-                description: 'Server-managed prize pools with public blockchain verification. Every transaction is auditable and trustless.'
+                title: 'On-Chain Verification',
+                description: 'All payments and payouts recorded on Solana blockchain. Transaction hashes publicly viewable for audit purposes.'
               },
               {
                 icon: TrendingUp,
                 color: 'neon-green',
-                title: 'Token Flywheel',
-                description: '5% of every pot automatically buys and stakes AGAR tokens, creating continuous deflationary pressure.'
+                title: 'Token Buyback',
+                description: '5% of each pot used to purchase AGAR tokens via Raydium SDK, then automatically staked in protocol contract.'
               },
               {
                 icon: Trophy,
                 color: 'neon-blue',
-                title: 'Instant Payouts',
-                description: 'Winners receive 80% of the pot directly to their wallet. No waiting, no fees, no friction.'
+                title: 'Automated Payouts',
+                description: 'Winners receive USDC via SPL token transfer. Server checks for Associated Token Account (ATA), creates if needed.'
               }
             ].map((feature, index) => (
               <motion.div
@@ -421,8 +429,9 @@ export default function Home() {
             viewport={{ once: true }}
             className="text-xl text-center text-gray-300 mb-16 max-w-3xl mx-auto"
           >
-            AgarFi leverages the hottest trending Web3 technologies: x403 for bulletproof anti-bot security 
-            and x402-inspired UX for viral payment experiences.
+            AgarFi uses x403 protocol for cryptographic wallet authentication and x402 protocol for 
+            HTTP-based cryptocurrency payments. Both protocols eliminate need for accounts, sessions, or 
+            identity verification.
           </motion.p>
 
           <div className="grid md:grid-cols-2 gap-8 mb-12">
@@ -436,26 +445,34 @@ export default function Home() {
                 <Shield className="w-12 h-12 text-neon-green" />
                 <h3 className="text-3xl font-bold text-neon-green">x403 Protocol</h3>
               </div>
-              <p className="text-sm text-neon-green/70 mb-4 font-semibold">🔥 TRENDING IN WEB3 2025</p>
+              <p className="text-sm text-neon-green/70 mb-4 font-semibold">WALLET SIGNATURE AUTHENTICATION</p>
               <p className="text-gray-300 mb-4 leading-relaxed">
-                Next-generation wallet signature authentication that's replacing CAPTCHAs across major 
-                DeFi and GameFi platforms. 90% less friction, 99%+ bot prevention.
+                Authentication protocol using ECDSA (Elliptic Curve Digital Signature Algorithm) to verify 
+                wallet ownership. Server generates challenge message, client signs with private key, server 
+                validates signature matches public address.
               </p>
               <div className="bg-neon-green/10 border border-neon-green/30 rounded-lg p-4 mb-4">
+                <p className="text-sm font-bold text-neon-green mb-2">How x403 Works:</p>
+                <p className="text-sm text-gray-300 mb-3">
+                  When you connect your wallet, x403 generates a unique challenge message. You sign this message 
+                  with your private key (only you can do this). The signature proves you own the wallet without 
+                  revealing your private key. This signature-based authentication is bot-resistant and requires 
+                  zero personal information.
+                </p>
                 <p className="text-sm font-bold text-neon-green mb-2">How AgarFi Uses x403:</p>
                 <p className="text-sm text-gray-300">
-                  Every time you join a lobby, your wallet signs a unique challenge. No bots can automate this. 
-                  We enforce one game per wallet and cache sessions for 35 minutes to reduce friction. 
-                  Your wallet IS your account—no passwords, no registration forms.
+                  Every lobby join requires a fresh wallet signature to verify you're the real owner. We cache 
+                  your session for 35 minutes to reduce signing friction. One wallet = one active game enforced. 
+                  No bots can fake wallet signatures. No passwords to remember. No email verification.
                 </p>
               </div>
               <ul className="space-y-3">
                 {[
-                  'No annoying CAPTCHA puzzles',
-                  'Cryptographically secure signatures',
-                  'One-click wallet authentication',
-                  'Perfect mobile UX',
-                  'Industry standard for Web3 gaming'
+                  'ECDSA signature verification (secp256k1)',
+                  'No PII (Personally Identifiable Information)',
+                  'Signature requires private key access',
+                  'Session tokens cached (35 min TTL)',
+                  'One wallet = one concurrent game slot'
                 ].map((item, i) => (
                   <li key={i} className="flex items-center gap-2 text-gray-300">
                     <Zap className="w-4 h-4 text-neon-green" />
@@ -473,28 +490,36 @@ export default function Home() {
             >
               <div className="flex items-center gap-3 mb-4">
                 <Rocket className="w-12 h-12 text-neon-blue" />
-                <h3 className="text-3xl font-bold text-neon-blue">x402 UX</h3>
+                <h3 className="text-3xl font-bold text-neon-blue">x402 Protocol</h3>
               </div>
-              <p className="text-sm text-neon-blue/70 mb-4 font-semibold">🚀 VIRAL MARKETING PROTOCOL</p>
+              <p className="text-sm text-neon-blue/70 mb-4 font-semibold">HTTP 402 PAYMENT PROTOCOL</p>
               <p className="text-gray-300 mb-4 leading-relaxed">
-                Marketing-first payment experience that turns every transaction into a growth moment. 
-                Top GameFi projects are adopting x402 principles for 3x conversion rates.
+                Protocol for programmatic payments over HTTP using status code 402. Standardizes payment flow: 
+                server returns 402 with payment instructions, client submits crypto payment, server verifies via 
+                facilitator endpoints, then serves resource.
               </p>
               <div className="bg-neon-blue/10 border border-neon-blue/30 rounded-lg p-4 mb-4">
+                <p className="text-sm font-bold text-neon-blue mb-2">How x402 Works:</p>
+                <p className="text-sm text-gray-300 mb-3">
+                  1) Client requests resource 2) Server returns 402 + payment details (amount, recipient, token) 
+                  3) Client constructs blockchain transaction 4) Server calls facilitator /verify endpoint to validate 
+                  transaction 5) Facilitator calls /settle to execute payment 6) Server grants access to resource. 
+                  All via standard HTTP without session state.
+                </p>
                 <p className="text-sm font-bold text-neon-blue mb-2">How AgarFi Uses x402:</p>
                 <p className="text-sm text-gray-300">
-                  When you send USDC to join a game, our prompts say "Join 1,247 players who've won today! 💰" 
-                  instead of boring transaction messages. When you win, we show "Share your $10 victory on X!" 
-                  Every payment becomes a viral moment with social proof and FOMO.
+                  Lobby entry endpoints return 402 status with USDC payment requirements. Client wallet constructs 
+                  SPL token transfer. Server verifies transaction on Solana network before admitting player to game. 
+                  Payouts use same protocol in reverse—server initiates transfer, client receives USDC.
                 </p>
               </div>
               <ul className="space-y-3">
                 {[
-                  'Branded payment prompts with FOMO',
-                  'Social proof during transactions',
-                  'Built-in viral sharing mechanics',
-                  'Community milestone celebrations',
-                  'A/B tested conversion optimization'
+                  'No accounts or sessions required',
+                  'Programmatic crypto payments over HTTP',
+                  'Built on HTTP 402 status code',
+                  'Instant payment verification & settlement',
+                  'Perfect for micropayments & per-use billing'
                 ].map((item, i) => (
                   <li key={i} className="flex items-center gap-2 text-gray-300">
                     <Sparkles className="w-4 h-4 text-neon-blue" />
@@ -513,10 +538,10 @@ export default function Home() {
           >
             <h3 className="text-2xl font-bold mb-4 gradient-text">The Winning Combination</h3>
             <p className="text-xl text-gray-300 max-w-3xl mx-auto">
-              x403 ensures only <span className="text-neon-green font-bold">real humans</span> play. 
-              x402 makes those humans <span className="text-neon-blue font-bold">want to share</span>. 
-              Together they create a <span className="text-neon-purple font-bold">viral, bot-free ecosystem</span>. 
-              AgarFi is the first GameFi project to combine both at scale.
+              x403 ensures only <span className="text-neon-green font-bold">verified wallet owners</span> play (anti-bot). 
+              x402 enables <span className="text-neon-blue font-bold">frictionless crypto payments</span> without accounts (no-KYC). 
+              Together they create a <span className="text-neon-purple font-bold">permissionless, bot-free gaming economy</span>. 
+              AgarFi is the first GameFi project to combine both protocols at scale.
             </p>
           </motion.div>
         </div>
