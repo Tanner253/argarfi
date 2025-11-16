@@ -348,6 +348,15 @@ export class LobbyManager {
           player.blobs = [];
           player.stats.timeSurvived = (Date.now() - player.joinTime) / 1000;
           
+          // Check if game should end (all players gone)
+          const alivePlayers = Array.from(game.players.values()).filter(p => p.blobs.length > 0);
+          console.log(`${alivePlayers.length} players still alive in game ${game.id}`);
+          
+          // If only 1 or 0 players left, trigger game end check immediately
+          if (alivePlayers.length <= 1) {
+            game.forceWinCheck();
+          }
+          
           return;
         }
       }

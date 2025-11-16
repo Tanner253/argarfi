@@ -429,6 +429,13 @@ export class GameRoom {
     const alivePlayers = Array.from(this.players.values()).filter(p => p.blobs.length > 0);
     const elapsed = Date.now() - this.gameStartTime;
 
+    // No players left (everyone disconnected)
+    if (alivePlayers.length === 0) {
+      console.log('Win condition: No players left - everyone disconnected');
+      this.endGame(null);
+      return;
+    }
+
     // Last player standing
     if (alivePlayers.length === 1 && this.players.size > 1) {
       console.log(`Win condition: Last player standing (${alivePlayers[0].name})`);
@@ -442,12 +449,6 @@ export class GameRoom {
       console.log(`Win condition: Time limit reached. Winner: ${winner?.name || 'None'}`);
       this.endGame(winner?.id || null);
       return;
-    }
-
-    // No players left
-    if (alivePlayers.length === 0) {
-      console.log('Win condition: No players left');
-      this.endGame(null);
     }
   }
 
@@ -520,6 +521,14 @@ export class GameRoom {
    */
   isRunning(): boolean {
     return this.tickInterval !== null;
+  }
+
+  /**
+   * Force win condition check (called when player disconnects)
+   */
+  forceWinCheck(): void {
+    console.log('Force checking win condition');
+    this.checkWinCondition();
   }
 
   /**
