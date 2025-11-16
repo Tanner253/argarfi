@@ -444,11 +444,11 @@ export default function GamePage() {
 
       // Clean up smooth positions for blobs that no longer exist
       const currentBlobIds = new Set(blobs.map(b => b.id));
-      for (const [id] of smoothBlobsRef.current) {
+      Array.from(smoothBlobsRef.current.keys()).forEach(id => {
         if (!currentBlobIds.has(id)) {
           smoothBlobsRef.current.delete(id);
         }
-      }
+      });
 
       ctx.restore();
 
