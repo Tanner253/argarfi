@@ -366,9 +366,16 @@ export default function Home() {
                   <span className="text-2xl font-bold text-neon-purple">5%</span>
                 </div>
               </div>
-              <p className="mt-6 text-gray-300 text-sm">
-                Example: 25-player $25 game = $625 pot → Winner: $500, Fees: $93.75, Buyback: $31.25
-              </p>
+              <div className="mt-6 space-y-3">
+                <p className="text-xs text-gray-400 font-bold uppercase">Standard Mode Examples (25 players):</p>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>$5: Total $125 → Winner: $100</p>
+                  <p>$25: Total $625 → Winner: $500</p>
+                  <p>$50: Total $1,250 → Winner: $1,000</p>
+                  <p>$100: Total $2,500 → Winner: $2,000</p>
+                  <p className="text-neon-purple font-bold pt-2">🐋 Whale: Total $25,000 → Winner: $20,000</p>
+                </div>
+              </div>
             </motion.div>
 
             <motion.div
@@ -408,6 +415,90 @@ export default function Home() {
               More players → Bigger pots → More AGAR buybacks → Higher token value → 
               More player incentive → Even bigger pots 🔄
             </p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-gradient-to-br from-neon-purple/20 via-neon-pink/20 to-neon-blue/20 border-2 border-neon-purple/70 rounded-2xl p-10 text-center mt-12 relative overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-neon-purple/10 via-transparent to-neon-blue/10 animate-pulse-slow" />
+            <div className="relative z-10">
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <span className="text-5xl animate-float">🐋</span>
+                <h3 className="text-5xl md:text-6xl font-black gradient-text text-glow">WHALE MODE</h3>
+                <span className="text-5xl animate-float">🐋</span>
+              </div>
+              <p className="text-sm text-neon-purple font-bold mb-6 uppercase tracking-wide">
+                🔓 Unlocks at $1M Market Cap • Live Service Global Event
+              </p>
+              <p className="text-2xl md:text-3xl text-gray-300 mb-8 max-w-4xl mx-auto font-bold">
+                The ultimate high-stakes arena where <span className="text-neon-green">50 players</span> battle for a 
+                <span className="text-neon-blue"> $25,000 prize pool</span>. Winner takes home 
+                <span className="text-neon-purple"> $20,000</span>.
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto mb-8">
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-green/30">
+                  <p className="text-sm text-gray-400 mb-2">Buy-In</p>
+                  <p className="text-4xl font-bold text-neon-green">$500</p>
+                </div>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-blue/30">
+                  <p className="text-sm text-gray-400 mb-2">Max Players</p>
+                  <p className="text-4xl font-bold text-neon-blue">50</p>
+                </div>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-purple/30">
+                  <p className="text-sm text-gray-400 mb-2">Winner Takes</p>
+                  <p className="text-4xl font-bold text-neon-purple">$20K</p>
+                </div>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-pink/30">
+                  <p className="text-sm text-gray-400 mb-2">Max Pot</p>
+                  <p className="text-4xl font-bold text-neon-pink">$25K</p>
+                </div>
+              </div>
+              <div className="bg-neon-purple/10 border border-neon-purple/30 rounded-xl p-6 max-w-4xl mx-auto">
+                <h4 className="text-xl font-bold text-neon-purple mb-4">🌍 Global Event Features</h4>
+                <div className="grid md:grid-cols-2 gap-4 text-left">
+                  <div className="flex items-start gap-2">
+                    <span className="text-neon-green text-xl">📺</span>
+                    <div>
+                      <p className="font-bold text-neon-green">Live Spectator Mode</p>
+                      <p className="text-sm text-gray-400">Watch elite players compete in real-time</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-neon-blue text-xl">🏆</span>
+                    <div>
+                      <p className="font-bold text-neon-blue">Hall of Fame</p>
+                      <p className="text-sm text-gray-400">Permanent leaderboard of Whale victors</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-neon-purple text-xl">🎥</span>
+                    <div>
+                      <p className="font-bold text-neon-purple">Auto-Recorded Replays</p>
+                      <p className="text-sm text-gray-400">Every match saved for community viewing</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-neon-pink text-xl">🌐</span>
+                    <div>
+                      <p className="font-bold text-neon-pink">Community Countdown</p>
+                      <p className="text-sm text-gray-400">Global notifications when Whale lobby opens</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p className="mt-8 text-xl text-gray-300 max-w-3xl mx-auto leading-relaxed">
+                Whale Mode isn't just a game—it's a <span className="text-neon-green font-bold">spectacle</span>. 
+                The entire community watches, discusses strategy, and celebrates victories together. 
+                Think <span className="text-neon-blue font-bold">esports tournament meets live service event</span>, 
+                happening organically whenever 50 players are ready to compete.
+              </p>
+              <p className="mt-4 text-lg text-neon-purple font-bold">
+                This is Web3 gaming's Super Bowl. And it happens every time we hit 50 players. 🏆
+              </p>
+            </div>
           </motion.div>
         </div>
       </section>
@@ -639,7 +730,8 @@ export default function Home() {
                   '60fps Canvas rendering with vanilla JS physics',
                   'Socket.io real-time multiplayer (60Hz server tick)',
                   'Blob mechanics: eat, split, merge, eject pellets',
-                  'Four game modes ($5, $25, $50, $100 buy-ins)',
+                  'Four standard game modes ($5, $25, $50, $100)',
+                  'Whale Mode infrastructure (50 player lobbies)',
                   'Dynamic lobby system with auto-scaling',
                   'Mobile-optimized touch controls and responsive UI'
                 ]
