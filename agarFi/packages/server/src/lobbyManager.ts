@@ -92,14 +92,24 @@ export class LobbyManager {
       return { success: false, message: 'Lobby not accepting players' };
     }
 
-    if (lobby.players.size >= lobby.maxPlayers) {
-      return { success: false, message: 'Lobby is full' };
-    }
-
     // Check if player already in another lobby
     for (const l of this.lobbies.values()) {
       if (l.players.has(playerId)) {
         return { success: false, message: 'Already in a lobby' };
+      }
+    }
+
+    // Check if lobby is full (but allow joining during countdown if bots can be replaced)
+    if (lobby.players.size >= lobby.maxPlayers) {
+      // If in countdown with autofill, check if there are bots to replace
+      if (lobby.status === 'countdown' && config.dev.autoFillBots) {
+        const bots = Array.from(lobby.players.values()).filter(p => p.isBot);
+        if (bots.length === 0) {
+          return { success: false, message: 'Lobby is full' };
+        }
+        // Has bots, can replace - continue
+      } else {
+        return { success: false, message: 'Lobby is full' };
       }
     }
 
