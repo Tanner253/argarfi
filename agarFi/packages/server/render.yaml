@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: agarfi-server
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MIN_PLAYERS_DEV
+        value: 10
+      - key: AUTO_FILL_BOTS
+        value: false
+      - key: SERVER_PORT
+        value: 10000
+      - key: LOBBY_AUTO_START_COUNTDOWN_MS
+        value: 60000
+
