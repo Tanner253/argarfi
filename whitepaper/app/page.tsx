@@ -115,9 +115,10 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          className="text-2xl font-bold gradient-text"
+          className="flex items-center gap-3"
         >
-          AgarFi
+          <img src="/icon.png" alt="AgarFi Logo" className="w-10 h-10" />
+          <span className="text-2xl font-bold gradient-text">AgarFi</span>
         </motion.div>
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -761,7 +762,7 @@ export default function Home() {
                 </svg>
               </a>
               <a 
-                href="https://github.com/Tanner253" 
+                href="https://github.com/Tanner253/argarfi" 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="text-neon-green hover:text-neon-blue transition-colors"
