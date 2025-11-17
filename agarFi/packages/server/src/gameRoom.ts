@@ -339,18 +339,20 @@ export class GameRoom {
   }
 
   /**
-   * Handle merging of same-player blobs
+   * Handle merging of same-player blobs (agar.io style)
    */
   private handleMerging(): void {
     const now = Date.now();
-    const MERGE_COOLDOWN = 30000; // 30 seconds
+    const MERGE_COOLDOWN = 30000; // 30 seconds like agar.io
 
     for (const player of this.players.values()) {
-      // Update merge eligibility for all blobs
+      // Update merge eligibility for all blobs (each blob tracked individually)
       for (const blob of player.blobs) {
         const timeSinceSplit = now - blob.splitTime;
-        if (timeSinceSplit > MERGE_COOLDOWN) {
+        if (timeSinceSplit >= MERGE_COOLDOWN) {
           blob.canMerge = true;
+        } else {
+          blob.canMerge = false; // Still on cooldown
         }
       }
 
@@ -360,7 +362,7 @@ export class GameRoom {
           const blob1 = player.blobs[i];
           const blob2 = player.blobs[j];
 
-          // Both must be eligible to merge (30s cooldown passed)
+          // BOTH blobs must have passed their individual 30s cooldown
           if (blob1.canMerge && blob2.canMerge) {
             const r1 = Physics.calculateRadius(blob1.mass);
             const r2 = Physics.calculateRadius(blob2.mass);
@@ -368,13 +370,19 @@ export class GameRoom {
             // Calculate distance between centers
             const dist = Physics.distance(blob1.x, blob1.y, blob2.x, blob2.y);
             
-            // Require 50% overlap: distance < 50% of combined radii
-            const overlapThreshold = (r1 + r2) * 0.5;
+            // Agar.io style: Blobs must be TOUCHING (overlapping)
+            // Touching = distance less than sum of radii
+            const touching = dist < (r1 + r2);
             
-            if (dist < overlapThreshold) {
+            if (touching) {
+              console.log(`🔄 Merging ${player.name}'s blobs: dist=${Math.floor(dist)}, r1+r2=${Math.floor(r1+r2)}, blob1Time=${Math.floor((now-blob1.splitTime)/1000)}s, blob2Time=${Math.floor((now-blob2.splitTime)/1000)}s`);
               // Merge blob2 into blob1
               const oldMass = blob1.mass;
               blob1.mass += blob2.mass;
+              
+              // Reset split time since this is now a "new" merged blob
+              blob1.splitTime = now;
+              blob1.canMerge = false; // New merged blob gets 30s cooldown
               
               // Send merge animation event
               this.io.to(this.id).emit('blobMerged', {
@@ -386,7 +394,7 @@ export class GameRoom {
               j--; // Adjust index after removal
               
               const playerType = player.isBot ? 'Bot' : 'Player';
-              console.log(`✓ ${playerType} ${player.name} merged blobs (${Math.floor(oldMass)} + ${Math.floor(blob2.mass)} = ${Math.floor(blob1.mass)}) - 50% overlap, ${Math.floor(now - blob1.splitTime)/1000}s since split`);
+              console.log(`✅ ${playerType} ${player.name} MERGED: ${Math.floor(oldMass)} + ${Math.floor(blob2.mass)} = ${Math.floor(blob1.mass)} mass (after 30s cooldown)`);
             }
           }
         }
