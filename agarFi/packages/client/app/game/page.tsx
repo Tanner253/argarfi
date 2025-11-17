@@ -934,6 +934,16 @@ export default function GamePage() {
             <p className="text-gray-400">Get ready to play!</p>
           </div>
 
+          {/* Winner Reward Banner */}
+          <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl p-4 mb-6">
+            <div className="text-2xl font-black text-neon-green mb-1">
+              💰 Winner Gets $1 USDC
+            </div>
+            <div className="text-xs text-gray-400">
+              Automatically sent to your wallet
+            </div>
+          </div>
+
           <div className="bg-cyber-darker rounded-lg p-6 mb-6 border border-neon-green/30">
             <div className="text-4xl font-black text-neon-green mb-2">
               {lobbyStatus.players}/{lobbyStatus.max}
