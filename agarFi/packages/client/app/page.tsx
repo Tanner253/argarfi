@@ -330,10 +330,10 @@ export default function HomePage() {
         initial={{ y: -100 }}
         animate={{ y: 0 }}
       >
-        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-black gradient-text">AgarFi</h1>
-            <div className="hidden md:flex items-center gap-3 text-xs">
+        <div className="max-w-[1600px] mx-auto px-4 md:px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3 md:gap-4">
+            <h1 className="text-xl md:text-2xl font-black gradient-text">AgarFi</h1>
+            <div className="hidden lg:flex items-center gap-2 md:gap-3 text-xs">
               <span className="flex items-center gap-1.5 text-gray-400">
                 <div className="w-2 h-2 bg-gray-400 rounded-full" />
                 <span className="font-bold text-white">{connectedClients}</span> online
@@ -363,27 +363,28 @@ export default function HomePage() {
             </div>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 md:gap-2">
             <motion.button
               onClick={() => setShowRoadmap(true)}
-              className="px-3 py-1.5 bg-neon-purple/10 border border-neon-purple/30 rounded-lg text-neon-purple text-xs font-bold hover:bg-neon-purple/20 transition-all flex items-center gap-1.5"
+              className="px-2 md:px-3 py-1.5 bg-neon-purple/10 border border-neon-purple/30 rounded-lg text-neon-purple text-xs font-bold hover:bg-neon-purple/20 transition-all flex items-center gap-1 md:gap-1.5"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
               </svg>
-              Roadmap
+              <span className="hidden sm:inline">Roadmap</span>
             </motion.button>
             <motion.a
               href="https://agarfi.vercel.app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3 py-1.5 bg-neon-green/10 border border-neon-green/30 rounded-lg text-neon-green text-xs font-bold hover:bg-neon-green/20 transition-all"
+              className="px-2 md:px-3 py-1.5 bg-neon-green/10 border border-neon-green/30 rounded-lg text-neon-green text-xs font-bold hover:bg-neon-green/20 transition-all flex items-center gap-1"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              Whitepaper
+              <span className="hidden sm:inline">Whitepaper</span>
+              <span className="sm:hidden">📄</span>
             </motion.a>
           </div>
         </div>
@@ -395,17 +396,17 @@ export default function HomePage() {
           
           {/* Hero - Centered */}
           <motion.div
-            className="text-center mb-8 mt-8"
+            className="text-center mb-6 md:mb-8 mt-4 md:mt-8 px-4"
             initial={{ opacity: 0, y: -30 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <h2 className="text-6xl md:text-7xl font-black gradient-text text-glow-strong mb-4">
+            <h2 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black gradient-text text-glow-strong mb-3 md:mb-4">
               Choose Your Battle
             </h2>
-            <p className="text-lg text-gray-400 mb-2">
+            <p className="text-base md:text-lg text-gray-400 mb-2">
               Pick your stakes, dominate the arena, win big
             </p>
-            <p className="text-xs text-white/60 mb-6">
+            <p className="text-xs text-white/60 mb-4 md:mb-6">
               Bots will not be in live games when in production
             </p>
             
@@ -421,109 +422,115 @@ export default function HomePage() {
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
                 placeholder="Enter your name to play..."
-                className="w-full px-6 py-4 bg-cyber-dark/70 backdrop-blur-xl border-2 border-neon-green/30 rounded-xl focus:outline-none focus:border-neon-green focus:shadow-lg focus:shadow-neon-green/30 text-white text-center text-lg transition-all placeholder-gray-500"
+                className="w-full px-4 md:px-6 py-3 md:py-4 bg-cyber-dark/70 backdrop-blur-xl border-2 border-neon-green/30 rounded-xl focus:outline-none focus:border-neon-green focus:shadow-lg focus:shadow-neon-green/30 text-white text-center text-base md:text-lg transition-all placeholder-gray-500"
                 maxLength={20}
               />
             </motion.div>
           </motion.div>
 
           {/* Game Modes - Hero Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {gameModes.map((mode, index) => {
+          <div className="space-y-4">
+            {/* Whale Mode First (if exists) */}
+            {gameModes.filter(m => m.tier === 'whale').map((mode, index) => {
               const lobby = getLobbyStatus(mode.tier);
               const isLocked = mode.locked;
               const potentialWinnings = calculateWinnings(mode.buyIn, mode.maxPlayers);
-              const isWhale = mode.tier === 'whale';
+              const isWhale = true;
               const gameStatus = getGameStatus(lobby);
 
-              // Special rendering for Whale Mode
-              if (isWhale) {
-                return (
-                  <motion.div
-                    key={mode.tier}
-                    initial={{ opacity: 0, y: 30 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.3 + index * 0.05 }}
-                    className="sm:col-span-2 lg:col-span-3 xl:col-span-4 relative group"
-                  >
-                    {/* Epic Glow */}
-                    <div className="absolute -inset-1 rounded-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-500 blur-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 animate-pulse" />
+              return (
+                <motion.div
+                  key={mode.tier}
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="relative group"
+                >
+                  {/* Epic Glow */}
+                  <div className="absolute -inset-1 rounded-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-500 blur-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 animate-pulse" />
 
-                    <div className="relative bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-xl border-2 border-yellow-400/70 rounded-2xl overflow-hidden">
-                      {/* Animated Background */}
-                      <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/5 via-transparent to-orange-500/5 animate-shimmer" />
-                      
-                      {/* Unlock Badge - Top Right */}
-                      <div className="absolute top-4 right-4">
-                        {isLocked ? (
-                          <div className="px-4 py-2 bg-purple-500/40 border-2 border-purple-400/60 rounded-xl backdrop-blur-sm">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg animate-pulse">💎</span>
-                              <div className="text-sm font-bold text-purple-300">Unlocks at $1M Market Cap</div>
+                  <div className="relative bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-xl border-2 border-yellow-400/70 rounded-2xl overflow-hidden">
+                    {/* Animated Background */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/5 via-transparent to-orange-500/5 animate-shimmer" />
+                    
+                    {/* Unlock Badge - Top Right */}
+                    <div className="absolute top-3 md:top-4 right-3 md:right-4">
+                      {isLocked ? (
+                        <div className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-500/40 border-2 border-purple-400/60 rounded-lg md:rounded-xl backdrop-blur-sm">
+                          <div className="flex items-center gap-1.5 md:gap-2">
+                            <span className="text-base md:text-lg animate-pulse">💎</span>
+                            <div className="text-xs md:text-sm font-bold text-purple-300">Unlocks at $1M Market Cap</div>
+                          </div>
+                        </div>
+                      ) : lobby?.status === 'playing' && lobby.timeRemaining !== null && lobby.timeRemaining !== undefined && (
+                        <div className="px-3 md:px-4 py-1.5 md:py-2 bg-neon-blue/40 border-2 border-neon-blue/60 rounded-lg md:rounded-xl backdrop-blur-sm">
+                          <div className="flex items-center gap-1.5 md:gap-2">
+                            <span className="text-base md:text-lg">⏱</span>
+                            <div className="text-xs md:text-sm font-bold text-neon-blue">
+                              {Math.floor(lobby.timeRemaining / 60000)}:{String(Math.floor((lobby.timeRemaining % 60000) / 1000)).padStart(2, '0')}
                             </div>
                           </div>
-                        ) : lobby?.status === 'playing' && lobby.timeRemaining !== null && lobby.timeRemaining !== undefined && (
-                          <div className="px-4 py-2 bg-neon-blue/40 border-2 border-neon-blue/60 rounded-xl backdrop-blur-sm">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg">⏱</span>
-                              <div className="text-sm font-bold text-neon-blue">
-                                {Math.floor(lobby.timeRemaining / 60000)}:{String(Math.floor((lobby.timeRemaining % 60000) / 1000)).padStart(2, '0')}
-                              </div>
-                            </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="relative p-4 md:p-6 lg:p-8">
+                      {/* Title Section */}
+                      <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
+                        <span className="text-4xl md:text-5xl lg:text-6xl animate-float">🐋</span>
+                        <div>
+                          <h3 className="text-3xl sm:text-4xl md:text-5xl font-black gradient-text text-glow-strong mb-1 md:mb-2">
+                            WHALE MODE
+                          </h3>
+                          <div className="text-xl sm:text-2xl md:text-3xl font-bold text-white">
+                            Win ${potentialWinnings.toLocaleString()}
                           </div>
-                        )}
+                        </div>
                       </div>
 
-                      <div className="relative p-8">
-                        {/* Title Section */}
-                        <div className="flex items-center gap-4 mb-6">
-                          <span className="text-6xl animate-float">🐋</span>
-                          <div>
-                            <h3 className="text-5xl font-black gradient-text text-glow-strong mb-2">
-                              WHALE MODE
-                            </h3>
-                            <div className="text-3xl font-bold text-white">
-                              Win ${potentialWinnings.toLocaleString()}
-                            </div>
-                          </div>
+                      {/* Prize Grid */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 lg:gap-4 max-w-4xl">
+                        <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Entry Fee</div>
+                          <div className="text-2xl md:text-3xl font-black text-white">$500</div>
                         </div>
+                        <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Max Players</div>
+                          <div className="text-2xl md:text-3xl font-black text-white">50</div>
+                        </div>
+                        <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Total Pool</div>
+                          <div className="text-2xl md:text-3xl font-black text-white">$25K</div>
+                        </div>
+                        <div className="bg-gradient-to-br from-yellow-400/30 to-orange-500/30 border-2 border-yellow-400/70 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">🏆 Winner Takes</div>
+                          <div className="text-2xl md:text-3xl font-black gradient-text text-glow">$20K</div>
+                        </div>
+                      </div>
 
-                        {/* Prize Grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl">
-                          <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-4 text-center backdrop-blur-sm">
-                            <div className="text-sm text-yellow-400 mb-2 font-bold">Entry Fee</div>
-                            <div className="text-3xl font-black text-white">$500</div>
-                          </div>
-                          <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-4 text-center backdrop-blur-sm">
-                            <div className="text-sm text-yellow-400 mb-2 font-bold">Max Players</div>
-                            <div className="text-3xl font-black text-white">50</div>
-                          </div>
-                          <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-4 text-center backdrop-blur-sm">
-                            <div className="text-sm text-yellow-400 mb-2 font-bold">Total Pool</div>
-                            <div className="text-3xl font-black text-white">$25K</div>
-                          </div>
-                          <div className="bg-gradient-to-br from-yellow-400/30 to-orange-500/30 border-2 border-yellow-400/70 rounded-xl p-4 text-center backdrop-blur-sm">
-                            <div className="text-sm text-yellow-400 mb-2 font-bold">🏆 Winner Takes</div>
-                            <div className="text-3xl font-black gradient-text text-glow">$20K</div>
-                          </div>
-                        </div>
-
-                        {/* CTA Button */}
-                        <div className="mt-6 text-center">
-                          <motion.button
-                            className="px-16 py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-xl font-black text-xl"
-                            disabled
-                          >
-                            🔒 Coming Soon
-                          </motion.button>
-                        </div>
+                      {/* CTA Button */}
+                      <div className="mt-4 md:mt-6 text-center">
+                        <motion.button
+                          className="px-8 md:px-12 lg:px-16 py-3 md:py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-xl font-black text-lg md:text-xl"
+                          disabled
+                        >
+                          🔒 Coming Soon
+                        </motion.button>
                       </div>
                     </div>
-                  </motion.div>
-                );
-              }
+                  </div>
+                </motion.div>
+              );
+            })}
 
-              // Regular game modes
+            {/* Regular Game Modes Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 auto-rows-fr">
+            {gameModes.filter(m => m.tier !== 'whale').map((mode, index) => {
+              const lobby = getLobbyStatus(mode.tier);
+              const isLocked = mode.locked;
+              const potentialWinnings = calculateWinnings(mode.buyIn, mode.maxPlayers);
+              const gameStatus = getGameStatus(lobby);
+
               return (
                 <motion.div
                   key={mode.tier}
@@ -535,14 +542,14 @@ export default function HomePage() {
                   {/* Hover Glow */}
                   <div className="absolute -inset-0.5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur bg-neon-green" />
 
-                  <div className="relative bg-cyber-dark/80 backdrop-blur-xl border border-neon-green/30 hover:border-neon-green rounded-xl p-5 transition-all">
+                  <div className="relative bg-cyber-dark/80 backdrop-blur-xl border border-neon-green/30 hover:border-neon-green rounded-xl p-4 md:p-5 transition-all h-full flex flex-col">
                     {/* Header */}
-                    <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-start justify-between mb-3 md:mb-4">
                       <div>
-                        <h3 className="text-2xl font-black mb-1 text-white">
+                        <h3 className="text-xl md:text-2xl font-black mb-1 text-white">
                           ${mode.buyIn} Entry
                         </h3>
-                        <div className="text-xl font-bold text-neon-green">
+                        <div className="text-lg md:text-xl font-bold text-neon-green">
                           Win ${potentialWinnings.toLocaleString()}
                         </div>
                       </div>
@@ -570,21 +577,21 @@ export default function HomePage() {
 
                     {/* Stats Row */}
                     {lobby && (
-                      <div className="grid grid-cols-4 gap-2 mb-4">
-                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
-                          <div className="text-sm font-bold text-neon-green">{lobby.realPlayerCount || 0}</div>
+                      <div className="grid grid-cols-4 gap-1.5 md:gap-2 mb-3 md:mb-4">
+                        <div className="bg-cyber-darker/50 rounded p-1.5 md:p-2 text-center">
+                          <div className="text-xs md:text-sm font-bold text-neon-green">{lobby.realPlayerCount || 0}</div>
                           <div className="text-xs text-gray-500">Players</div>
                         </div>
-                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
-                          <div className="text-sm font-bold text-purple-400">{lobby.botCount || 0}</div>
+                        <div className="bg-cyber-darker/50 rounded p-1.5 md:p-2 text-center">
+                          <div className="text-xs md:text-sm font-bold text-purple-400">{lobby.botCount || 0}</div>
                           <div className="text-xs text-gray-500">Bots</div>
                         </div>
-                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
-                          <div className="text-sm font-bold text-neon-blue">{lobby.spectatorCount || 0}</div>
+                        <div className="bg-cyber-darker/50 rounded p-1.5 md:p-2 text-center">
+                          <div className="text-xs md:text-sm font-bold text-neon-blue">{lobby.spectatorCount || 0}</div>
                           <div className="text-xs text-gray-500">Spectators</div>
                         </div>
-                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
-                          <div className="text-sm font-bold text-white">{lobby.playersLocked}/{lobby.maxPlayers}</div>
+                        <div className="bg-cyber-darker/50 rounded p-1.5 md:p-2 text-center">
+                          <div className="text-xs md:text-sm font-bold text-white">{lobby.playersLocked}/{lobby.maxPlayers}</div>
                           <div className="text-xs text-gray-500">Total</div>
                         </div>
                       </div>
@@ -603,13 +610,16 @@ export default function HomePage() {
                       </div>
                     )}
 
+                    {/* Spacer to push button to bottom */}
+                    <div className="flex-grow"></div>
+
                     {/* Action Button */}
                     {lobby && lobby.status === 'playing' ? (
                       <motion.button
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.97 }}
                         onClick={() => spectateGame(mode.tier)}
-                        className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-neon-blue to-neon-purple text-white shadow-lg"
+                        className="w-full py-2.5 md:py-3 rounded-xl font-bold text-sm md:text-base bg-gradient-to-r from-neon-blue to-neon-purple text-white shadow-lg"
                       >
                         👁️ Spectate
                       </motion.button>
@@ -618,11 +628,11 @@ export default function HomePage() {
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.97 }}
                         onClick={() => joinLobby(mode.tier)}
-                        className="w-full py-3 rounded-xl font-bold shadow-lg bg-gradient-to-r from-neon-green to-neon-blue text-black"
+                        className="w-full py-2.5 md:py-3 rounded-xl font-bold text-sm md:text-base shadow-lg bg-gradient-to-r from-neon-green to-neon-blue text-black"
                       >
-                        <div className="flex items-center justify-center gap-2">
+                        <div className="flex items-center justify-center gap-1.5 md:gap-2">
                           <span className="line-through text-gray-600 text-xs">${mode.buyIn}</span>
-                          <span className="bg-red-500 text-white px-2 py-0.5 rounded text-xs font-black">FREE</span>
+                          <span className="bg-red-500 text-white px-1.5 md:px-2 py-0.5 rounded text-xs font-black">FREE</span>
                           <span>⚔️ Play Now</span>
                         </div>
                       </motion.button>
@@ -631,23 +641,25 @@ export default function HomePage() {
                 </motion.div>
               );
             })}
+            </div>
           </div>
 
           {/* Footer Info - Minimal */}
           <motion.div
-            className="mt-8 text-center"
+            className="mt-6 md:mt-8 text-center px-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.8 }}
           >
             <button
               onClick={copyToClipboard}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-cyber-dark/50 border border-gray-600/30 rounded-lg text-xs text-gray-400 hover:border-neon-blue/50 hover:text-neon-blue transition-all"
+              className="inline-flex items-center gap-2 px-3 md:px-4 py-2 bg-cyber-dark/50 border border-gray-600/30 rounded-lg text-xs text-gray-400 hover:border-neon-blue/50 hover:text-neon-blue transition-all"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
-              <span className="font-mono">{copied ? 'Copied!' : CONTRACT_ADDRESS.slice(0, 8) + '...' + CONTRACT_ADDRESS.slice(-6)}</span>
+              <span className="font-mono hidden sm:inline">{copied ? 'Copied!' : CONTRACT_ADDRESS.slice(0, 8) + '...' + CONTRACT_ADDRESS.slice(-6)}</span>
+              <span className="font-mono sm:hidden">{copied ? 'Copied!' : CONTRACT_ADDRESS.slice(0, 6) + '...' + CONTRACT_ADDRESS.slice(-4)}</span>
             </button>
           </motion.div>
 
@@ -667,7 +679,7 @@ export default function HomePage() {
             damping: 20,
             opacity: { duration: 0.2 }
           }}
-          className="fixed top-16 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-full px-4"
+          className="fixed top-14 md:top-16 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-[calc(100%-2rem)] md:w-full px-2 md:px-4"
         >
           <div className={`relative overflow-hidden rounded-xl border-2 backdrop-blur-xl shadow-2xl ${
             currentEvent.type === 'win'
@@ -679,10 +691,10 @@ export default function HomePage() {
             {/* Animated shimmer effect */}
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
             
-            <div className="relative p-4 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 flex-1">
+            <div className="relative p-3 md:p-4 flex items-center justify-between gap-2 md:gap-4">
+              <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
                 <motion.div 
-                  className="text-3xl"
+                  className="text-2xl md:text-3xl flex-shrink-0"
                   animate={{ 
                     rotate: [0, 10, -10, 10, 0],
                     scale: [1, 1.2, 1]
@@ -693,7 +705,7 @@ export default function HomePage() {
                   {currentEvent.type === 'elimination' && '💀'}
                   {currentEvent.type === 'game_start' && '🚀'}
                 </motion.div>
-                <div className={`flex-1 font-bold text-base ${
+                <div className={`flex-1 font-bold text-sm md:text-base truncate ${
                   currentEvent.type === 'win' ? 'text-yellow-400' :
                   currentEvent.type === 'elimination' ? 'text-red-400' :
                   'text-neon-blue'
@@ -706,11 +718,12 @@ export default function HomePage() {
               {currentEvent.type === 'game_start' && currentEvent.tier && (
                 <motion.button
                   onClick={() => spectateGame(currentEvent.tier!)}
-                  className="px-5 py-2.5 bg-neon-blue/40 hover:bg-neon-blue/60 border-2 border-neon-blue/80 rounded-lg text-white font-bold text-sm transition-all shadow-lg"
+                  className="px-3 md:px-5 py-2 md:py-2.5 bg-neon-blue/40 hover:bg-neon-blue/60 border-2 border-neon-blue/80 rounded-lg text-white font-bold text-xs md:text-sm transition-all shadow-lg flex-shrink-0"
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                 >
-                  👁️ Spectate Now
+                  <span className="hidden sm:inline">👁️ Spectate Now</span>
+                  <span className="sm:hidden">👁️ Watch</span>
                 </motion.button>
               )}
             </div>
@@ -721,13 +734,13 @@ export default function HomePage() {
       {/* Chat Bubble */}
       <motion.button
         onClick={() => setShowChat(true)}
-        className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-gradient-to-r from-neon-blue to-neon-purple rounded-full shadow-2xl flex items-center justify-center"
+        className="fixed bottom-4 md:bottom-6 right-4 md:right-6 z-40 w-12 h-12 md:w-14 md:h-14 bg-gradient-to-r from-neon-blue to-neon-purple rounded-full shadow-2xl flex items-center justify-center"
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
         animate={{ y: [0, -5, 0] }}
         transition={{ duration: 2, repeat: Infinity }}
       >
-        <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-6 h-6 md:w-7 md:h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
         {chatMessages.length > 0 && (
@@ -740,11 +753,11 @@ export default function HomePage() {
       {/* Chat Modal */}
       {showChat && (
         <div 
-          className="fixed inset-0 z-50 flex items-end justify-end p-4 bg-black/40 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-end md:items-end md:justify-end p-2 md:p-4 bg-black/40 backdrop-blur-sm"
           onClick={() => setShowChat(false)}
         >
           <motion.div 
-            className="w-full max-w-md bg-cyber-dark/95 backdrop-blur-xl border-2 border-neon-blue/50 rounded-2xl shadow-2xl overflow-hidden"
+            className="w-full md:max-w-md bg-cyber-dark/95 backdrop-blur-xl border-2 border-neon-blue/50 rounded-t-2xl md:rounded-2xl shadow-2xl overflow-hidden"
             initial={{ opacity: 0, y: 100 }}
             animate={{ opacity: 1, y: 0 }}
             onClick={(e) => e.stopPropagation()}
