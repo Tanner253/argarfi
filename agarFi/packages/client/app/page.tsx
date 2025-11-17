@@ -123,7 +123,7 @@ export default function HomePage() {
 
     window.addEventListener('resize', handleResize);
 
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3001';
+    const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3001';
 
     // Fetch game modes
     fetch(`${serverUrl}/api/game-modes`)
