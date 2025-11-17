@@ -160,8 +160,8 @@ export default function Home() {
               Skill-Based GameFi on Solana
             </p>
             <p className="text-lg md:text-xl mb-12 text-gray-300 max-w-3xl mx-auto">
-              Competitive multiplayer game where players wager USDC ($5-$100) and winners earn 80% of the pot.
-              Deterministic gameplay with no random mechanics. Built on Solana blockchain.
+              Play now for FREE in Phase 1! Competitive multiplayer where skill determines victory.
+              Winner-takes-all prize pools coming soon. Built on Solana blockchain.
             </p>
           </motion.div>
 
@@ -172,18 +172,18 @@ export default function Home() {
             className="flex flex-col sm:flex-row gap-4 justify-center mb-12"
           >
             <a 
-              href="https://x.com/osknyo_dev" 
+              href="https://agarfi.io" 
               target="_blank" 
               rel="noopener noreferrer"
               className="px-8 py-4 bg-neon-green text-black font-bold text-lg rounded-lg hover:box-glow hover:scale-105 transition-all text-center"
             >
-              Join Waitlist
+              Play Game Now
             </a>
             <a 
               href="#about"
               className="px-8 py-4 border-2 border-neon-blue text-neon-blue font-bold text-lg rounded-lg hover:bg-neon-blue hover:text-black transition-all text-center"
             >
-              Read Whitepaper
+              Learn More
             </a>
           </motion.div>
 
@@ -863,19 +863,19 @@ export default function Home() {
             viewport={{ once: true }}
           >
             <h2 className="text-5xl md:text-6xl font-bold mb-6 gradient-text text-glow">
-              Ready to Play for Real?
+              Ready to Play?
             </h2>
             <p className="text-xl text-gray-300 mb-12 max-w-2xl mx-auto">
-              Join the waitlist to get early access when we launch. The first skill-based GameFi
-              platform on Solana is coming soon.
+              Jump into Phase 1 now and test your skills! Free play with competitive bots and real players.
+              Full GameFi features with USDC wagering coming in future phases.
             </p>
             <a 
-              href="https://x.com/osknyo_dev" 
+              href="https://agarfi.io" 
               target="_blank" 
               rel="noopener noreferrer"
               className="inline-block px-12 py-5 bg-neon-green text-black font-bold text-xl rounded-lg hover:box-glow-strong hover:scale-110 transition-all mb-12"
             >
-              Join Waitlist
+              Play Game Now
             </a>
             <div className="flex justify-center gap-8 mt-12">
               <a 

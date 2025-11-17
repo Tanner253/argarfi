@@ -69,7 +69,7 @@ AgarFi is a competitive multiplayer game where players wager USDC and compete in
 
 ### Prize Distribution
 
-For a 25-player game at $25 USDC each:
+**Example: 25-player game at $25 USDC each:**
 
 | Recipient | Percentage | Amount (USDC) |
 |-----------|------------|---------------|
@@ -77,6 +77,25 @@ For a 25-player game at $25 USDC each:
 | Platform Fees | 15% | $93.75 |
 | AGAR Buyback | 5% | $31.25 |
 | **Total Pot** | **100%** | **$625.00** |
+
+### All Game Mode Projections
+
+**Standard Modes (25 players max):**
+
+| Buy-In | Total Pot | Winner Takes | Platform Fees | AGAR Buyback |
+|--------|-----------|--------------|---------------|--------------|
+| **$5** | $125 | $100.00 | $18.75 | $6.25 |
+| **$25** | $625 | $500.00 | $93.75 | $31.25 |
+| **$50** | $1,250 | $1,000.00 | $187.50 | $62.50 |
+| **$100** | $2,500 | $2,000.00 | $375.00 | $125.00 |
+
+**🐋 WHALE MODE (50 players max - Unlocked at $1M Market Cap):**
+
+| Buy-In | Total Pot | Winner Takes | Platform Fees | AGAR Buyback |
+|--------|-----------|--------------|---------------|--------------|
+| **$500** | **$25,000** | **$20,000.00** | **$3,750.00** | **$1,250.00** |
+
+> **Whale Mode** is a special high-stakes lobby that unlocks when AGAR token reaches $1M market cap. With up to 50 players competing for a potential **$25,000 prize pool**, this is the ultimate test of skill in Web3 gaming.
 
 ---
 
@@ -599,9 +618,10 @@ AGARw3/
 
 ### 📈 Post-Launch
 
+- [ ] 🐋 **Whale Mode activation** at $1M market cap (50 players, $25K pots)
 - [ ] Mobile app (iOS/Android)
 - [ ] Additional game modes (Teams, Battle Royale)
-- [ ] Tournament system
+- [ ] Tournament system with scheduled events
 - [ ] Staking rewards for AGAR holders
 - [ ] DAO governance
 - [ ] Multi-chain expansion
