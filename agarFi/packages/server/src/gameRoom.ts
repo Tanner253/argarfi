@@ -592,24 +592,27 @@ export class GameRoom {
     const alivePlayers = Array.from(this.players.values()).filter(p => p.blobs.length > 0);
     const elapsed = Date.now() - this.gameStartTime;
 
-    // Last player standing
+    console.log(`🔍 Win check: ${alivePlayers.length} alive / ${this.players.size} total | ${Math.floor(elapsed/1000)}s elapsed`);
+
+    // Last player standing (ONLY if game started with multiple players)
     if (alivePlayers.length === 1 && this.players.size > 1) {
-      console.log(`Win condition: Last player standing (${alivePlayers[0].name})`);
+      console.log(`🏆 WIN: Last player standing (${alivePlayers[0].name})`);
       this.endGame(alivePlayers[0].id);
       return;
     }
 
-    // Time limit reached (30 minutes)
+    // Time limit reached
     if (elapsed >= this.maxDuration) {
-      const winner = this.getLeaderboard()[0];
-      console.log(`Win condition: Time limit reached. Winner: ${winner?.name || 'None'}`);
+      const leaderboard = this.getLeaderboard();
+      const winner = leaderboard.length > 0 ? leaderboard[0] : null;
+      console.log(`⏰ WIN: Time limit reached. Winner: ${winner?.name || 'None'} with ${winner?.mass || 0} mass`);
       this.endGame(winner?.id || null);
       return;
     }
 
-    // No players left
+    // No players left (all eliminated)
     if (alivePlayers.length === 0) {
-      console.log('Win condition: No players left');
+      console.log('💀 WIN: No players left (draw)');
       this.endGame(null);
     }
   }
@@ -666,12 +669,14 @@ export class GameRoom {
     // Broadcast game end
     this.io.to(this.id).emit('gameEnd', result);
     
-    console.log(`Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
+    console.log(`🏁 Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
     
-    // Schedule cleanup after players have time to see results
+    // Schedule cleanup and removal after players see results
     setTimeout(() => {
+      console.log(`Stopping and removing game ${this.id}`);
       this.stop();
-    }, 5000);
+      // Game will be removed from lobby manager's games map in stop()
+    }, 10000); // 10 seconds to view results
   }
 
   /**
@@ -955,7 +960,14 @@ export class GameRoom {
     this.playerTargets.clear();
     this.gameState.spectators.clear();
     
-    console.log(`Game ${this.id} stopped and cleaned up`);
+    console.log(`🛑 Game ${this.id} stopped and cleaned up`);
+  }
+  
+  /**
+   * Get game ID for cleanup
+   */
+  getId(): string {
+    return this.id;
   }
 }
 

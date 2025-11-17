@@ -277,13 +277,15 @@ export class LobbyManager {
 
     console.log(`Game ${game.id} started with ${lobby.players.size} players`);
 
-    // Set up game end cleanup
+    // Set up game end cleanup - wait for game to stop itself
     const checkGameEnd = setInterval(() => {
       const gameStillExists = this.games.has(game.id);
       if (!gameStillExists) {
         clearInterval(checkGameEnd);
+        console.log(`Game ${game.id} removed, resetting lobby ${lobby.id}`);
         this.resetLobby(lobby);
-        console.log(`Lobby ${lobby.id} reset after game ended`);
+        this.broadcastSingleLobbyUpdate(lobby);
+        console.log(`✅ Lobby ${lobby.id} reset and ready for new game`);
       }
     }, 1000);
   }
@@ -292,11 +294,13 @@ export class LobbyManager {
    * Reset lobby to waiting state
    */
   private resetLobby(lobby: Lobby): void {
+    console.log(`Resetting lobby ${lobby.id} - clearing ${lobby.players.size} players, ${lobby.spectators.size} spectators`);
     lobby.players.clear();
     lobby.spectators.clear();
     lobby.status = 'waiting';
     lobby.countdownStartTime = null;
     lobby.gameStartTime = null;
+    console.log(`Lobby ${lobby.id} now in WAITING state, ready for new players`);
   }
 
   /**
