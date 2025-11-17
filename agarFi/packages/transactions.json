@@ -1,0 +1,46 @@
+{
+  "transactions": [
+    {
+      "id": "tx_1763421058756",
+      "timestamp": 1763421058895,
+      "winnerId": "player_1763421000492",
+      "winnerName": "awdsd",
+      "walletAddress": "56FDihqzReG6uZbnEDYhNi59wwdchcXMZ7LPqkFHSSdR",
+      "amountUSDC": 1,
+      "txSignature": null,
+      "gameId": "lobby_1",
+      "tier": "1",
+      "playersCount": 2,
+      "status": "pending",
+      "retries": 0
+    },
+    {
+      "id": "tx_1763421223654",
+      "timestamp": 1763421223768,
+      "winnerId": "player_1763421217168",
+      "winnerName": "8$",
+      "walletAddress": "56FDihqzReG6uZbnEDYhNi59wwdchcXMZ7LPqkFHSSdR",
+      "amountUSDC": 1,
+      "txSignature": "42r3QDbGXH2hsQUcS7aXZR1N9pJ2F6brJTmsxwyYzALf7rYKemzYbnhAJnH291tUW11mzxgmWDsKVzSQbSkWtfSe",
+      "gameId": "lobby_1",
+      "tier": "1",
+      "playersCount": 2,
+      "status": "success",
+      "retries": 0
+    },
+    {
+      "id": "tx_1763421465695",
+      "timestamp": 1763421465862,
+      "winnerId": "player_1763421404192",
+      "winnerName": "awds",
+      "walletAddress": "56FDihqzReG6uZbnEDYhNi59wwdchcXMZ7LPqkFHSSdR",
+      "amountUSDC": 1,
+      "txSignature": "3jCVJ7LFmnHm1mLoVpTvzCEH7wC4iwoCm3FkSBpFQrsihd2HR4ckv7tmKXfeXbXUwf4zB6JUbyMPadoLs47RNZdW",
+      "gameId": "lobby_1",
+      "tier": "1",
+      "playersCount": 2,
+      "status": "success",
+      "retries": 0
+    }
+  ]
+}

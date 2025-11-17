@@ -4,6 +4,9 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { config } from './config.js';
 import { LobbyManager } from './lobbyManager.js';
+import { WalletManager } from './wallet/walletManager.js';
+import { PaymentService } from './wallet/paymentService.js';
+import { getAllTransactions, getRecentTransactions } from './wallet/transactionLogger.js';
 
 const app = express();
 app.use(cors());
@@ -17,7 +20,59 @@ const io = new Server(httpServer, {
   },
 });
 
+// Map to track player wallet addresses
+const playerWallets = new Map<string, string>();
+
 const lobbyManager = new LobbyManager(io);
+
+// Initialize payment service (if configured)
+let paymentService: PaymentService | null = null;
+if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
+  try {
+    const walletManager = new WalletManager(
+      process.env.SOLANA_RPC_URL,
+      process.env.PLATFORM_WALLET_PRIVATE_KEY,
+      process.env.USDC_MINT_ADDRESS || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      parseFloat(process.env.WINNER_REWARD_USDC || '1')
+    );
+    paymentService = new PaymentService(walletManager);
+    console.log('💰 Payment service initialized');
+    console.log(`   Platform wallet: ${walletManager.getPlatformAddress()}`);
+    console.log(`   Winner reward: ${walletManager.getRewardAmount()} USDC`);
+    
+    // Set winner payout callback on lobby manager
+    lobbyManager.setWinnerPayoutCallback(async (winnerId, winnerName, gameId, tier, playersCount) => {
+      const walletAddress = playerWallets.get(winnerId);
+      
+      if (!walletAddress) {
+        console.error(`❌ No wallet address found for winner ${winnerName} (${winnerId})`);
+        return;
+      }
+      
+      console.log(`💰 Processing payout for winner: ${winnerName} (${walletAddress})`);
+      
+      const result = await paymentService!.sendWinnerPayout(
+        winnerId,
+        winnerName,
+        walletAddress,
+        gameId,
+        tier,
+        playersCount
+      );
+      
+      if (result.success) {
+        console.log(`✅ Winner ${winnerName} paid ${walletManager.getRewardAmount()} USDC`);
+        console.log(`   TX: ${result.txSignature}`);
+      } else {
+        console.error(`❌ Failed to pay winner ${winnerName}: ${result.error}`);
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to initialize payment service:', error);
+    console.error('   Games will run without payouts');
+  }
+}
 
 // Track total connected clients
 let connectedClients = 0;
@@ -77,6 +132,45 @@ app.get('/api/game-modes', (req: any, res: any) => {
   res.json(config.gameModes);
 });
 
+// Transaction log endpoint
+app.get('/api/transactions', (req: any, res: any) => {
+  const limit = req.query.limit ? parseInt(req.query.limit) : 50;
+  const transactions = getRecentTransactions(limit);
+  res.json({ transactions });
+});
+
+// Platform wallet status endpoint
+app.get('/api/platform-status', async (req: any, res: any) => {
+  if (!paymentService) {
+    res.json({
+      enabled: false,
+      balance: 0,
+      canPay: false,
+      message: 'Payment service not configured'
+    });
+    return;
+  }
+
+  try {
+    const balance = await paymentService.getPlatformBalance();
+    const canPay = await paymentService.canPayWinners();
+    
+    res.json({
+      enabled: true,
+      balance,
+      canPay,
+      message: canPay ? 'Creator rewards available' : 'Waiting for more creator rewards to fund games'
+    });
+  } catch (error) {
+    res.status(500).json({
+      enabled: true,
+      balance: 0,
+      canPay: false,
+      error: 'Failed to check platform status'
+    });
+  }
+});
+
 // Socket.io Events
 io.on('connection', (socket) => {
   connectedClients++;
@@ -101,8 +195,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Player joins lobby
-  socket.on('playerJoinLobby', ({ playerId, playerName, tier }) => {
+  // Player joins lobby (with optional wallet address)
+  socket.on('playerJoinLobby', ({ playerId, playerName, tier, walletAddress }) => {
+    // Store wallet address if provided
+    if (walletAddress) {
+      playerWallets.set(playerId, walletAddress);
+      console.log(`💼 Wallet registered for ${playerName}: ${walletAddress}`);
+    }
+    
     const result = lobbyManager.joinLobby(socket.id, playerId, playerName, tier);
     
     if (result.success) {
@@ -213,6 +313,8 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     connectedClients--;
     console.log(`🔌 Client disconnected: ${socket.id} (Total: ${connectedClients})`);
+    
+    // Clean up wallet address (note: we'll keep it for now to process payouts even if disconnected)
     
     let wasSpectator = false;
     

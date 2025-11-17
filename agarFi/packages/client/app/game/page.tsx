@@ -109,10 +109,11 @@ export default function GamePage() {
     const playerId = localStorage.getItem('playerId');
     const playerName = localStorage.getItem('playerName');
     const tier = localStorage.getItem('selectedTier');
+    const walletAddress = localStorage.getItem('playerWallet');
     const existingGameId = localStorage.getItem('currentGameId');
     const spectateMode = localStorage.getItem('spectateMode');
 
-    console.log('🔍 Game page useEffect - spectateMode:', spectateMode, 'tier:', tier);
+    console.log('🔍 Game page useEffect - spectateMode:', spectateMode, 'tier:', tier, 'wallet:', walletAddress);
 
     // DON'T clear spectate flag yet - need it for socket connection
     const isSpectator = spectateMode === 'true';
@@ -159,9 +160,9 @@ export default function GamePage() {
         console.log('Attempting to reconnect to game:', existingGameId);
         socket.emit('playerReconnect', { playerId, gameId: existingGameId });
       } else {
-        // Join lobby
-        console.log('Joining lobby for tier:', tier);
-        socket.emit('playerJoinLobby', { playerId, playerName, tier });
+        // Join lobby (with wallet address for payouts)
+        console.log('Joining lobby for tier:', tier, 'wallet:', walletAddress);
+        socket.emit('playerJoinLobby', { playerId, playerName, tier, walletAddress });
       }
     });
 

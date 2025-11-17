@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import { useWallet } from './components/WalletProvider';
+import { WalletConnectModal } from './components/WalletConnectModal';
+import { TransactionLog } from './components/TransactionLog';
 
 interface GameMode {
   tier: string;
@@ -43,11 +46,14 @@ export default function HomePage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const { connected, walletAddress, disconnect } = useWallet();
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
   const [playerName, setPlayerName] = useState('');
   const [showRoadmap, setShowRoadmap] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [showTransactionLog, setShowTransactionLog] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
@@ -56,6 +62,7 @@ export default function HomePage() {
   const [connectedClients, setConnectedClients] = useState(0);
   const [playersInGame, setPlayersInGame] = useState(0);
   const [totalSpectators, setTotalSpectators] = useState(0);
+  const [platformStatus, setPlatformStatus] = useState<{ canPay: boolean; message: string } | null>(null);
 
   const CONTRACT_ADDRESS = '6WQxQRguwYVwrHpFkNJsLK2XRnWLuqaLuQ8VBGXupump';
 
@@ -239,6 +246,14 @@ export default function HomePage() {
       })
       .catch(console.error);
 
+    // Fetch platform status
+    fetch(`${serverUrl}/api/platform-status`)
+      .then(res => res.json())
+      .then((status: { canPay: boolean; message: string }) => {
+        setPlatformStatus(status);
+      })
+      .catch(console.error);
+
     (window as any).gameSocket = socket;
 
     return () => {
@@ -252,6 +267,12 @@ export default function HomePage() {
   }, [chatMessages]);
 
   const sendChatMessage = () => {
+    // Require wallet connection for chat
+    if (!connected) {
+      setToastMessage('Connect wallet to chat');
+      return;
+    }
+    
     if (!chatInput.trim() || !playerName.trim()) return;
     
     const socket = (window as any).gameSocket;
@@ -265,6 +286,12 @@ export default function HomePage() {
   };
 
   const joinLobby = (tier: string) => {
+    // Require wallet connection
+    if (!connected) {
+      setShowWalletModal(true);
+      return;
+    }
+
     if (!playerName.trim()) {
       setToastMessage('Please enter a name');
       return;
@@ -274,6 +301,7 @@ export default function HomePage() {
     localStorage.setItem('playerId', playerId);
     localStorage.setItem('playerName', playerName);
     localStorage.setItem('selectedTier', tier);
+    localStorage.setItem('playerWallet', walletAddress || '');
     
     router.push('/game');
   };
@@ -364,6 +392,20 @@ export default function HomePage() {
           </div>
           
           <div className="flex items-center gap-1.5 md:gap-2">
+            {/* Transaction Log Button */}
+            <motion.button
+              onClick={() => setShowTransactionLog(true)}
+              className="px-2 md:px-3 py-1.5 bg-neon-blue/10 border border-neon-blue/30 rounded-lg text-neon-blue text-xs font-bold hover:bg-neon-blue/20 transition-all flex items-center gap-1"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="hidden sm:inline">Payouts</span>
+            </motion.button>
+            
+            {/* Roadmap Button */}
             <motion.button
               onClick={() => setShowRoadmap(true)}
               className="px-2 md:px-3 py-1.5 bg-neon-purple/10 border border-neon-purple/30 rounded-lg text-neon-purple text-xs font-bold hover:bg-neon-purple/20 transition-all flex items-center gap-1 md:gap-1.5"
@@ -375,6 +417,8 @@ export default function HomePage() {
               </svg>
               <span className="hidden sm:inline">Roadmap</span>
             </motion.button>
+            
+            {/* Whitepaper Link */}
             <motion.a
               href="https://agarfi.vercel.app/"
               target="_blank"
@@ -386,6 +430,34 @@ export default function HomePage() {
               <span className="hidden sm:inline">Whitepaper</span>
               <span className="sm:hidden">📄</span>
             </motion.a>
+            
+            {/* Wallet Button */}
+            {connected ? (
+              <motion.button
+                onClick={disconnect}
+                className="px-2 md:px-3 py-1.5 bg-gradient-to-r from-neon-green to-neon-blue rounded-lg text-black text-xs font-bold hover:opacity-90 transition-all flex items-center gap-1.5"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <span className="hidden md:inline font-mono">{walletAddress?.slice(0, 4)}...{walletAddress?.slice(-4)}</span>
+                <span className="md:hidden">💼</span>
+              </motion.button>
+            ) : (
+              <motion.button
+                onClick={() => setShowWalletModal(true)}
+                className="px-2 md:px-3 py-1.5 bg-neon-green/10 border border-neon-green/30 rounded-lg text-neon-green text-xs font-bold hover:bg-neon-green/20 transition-all flex items-center gap-1.5"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <span className="hidden sm:inline">Connect</span>
+              </motion.button>
+            )}
           </div>
         </div>
       </motion.nav>
@@ -406,9 +478,32 @@ export default function HomePage() {
             <p className="text-base md:text-lg text-gray-400 mb-2">
               Pick your stakes, dominate the arena, win big
             </p>
-            <p className="text-xs text-white/60 mb-4 md:mb-6">
+            <p className="text-xs text-white/60 mb-2">
               Bots will not be in live games when in production
             </p>
+            
+            {/* Platform Status Banner */}
+            {platformStatus && !platformStatus.canPay && (
+              <div className="max-w-md mx-auto mb-4">
+                <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg px-4 py-2 text-center">
+                  <p className="text-xs font-bold text-yellow-400">
+                    ⚠️ {platformStatus.message}
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            {/* Promo Banner */}
+            <div className="max-w-2xl mx-auto mb-4">
+              <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl px-4 py-3 text-center">
+                <p className="text-sm md:text-base font-bold text-neon-green mb-1">
+                  🎉 PROMOTIONAL EVENT: Win $1 USDC Per Game! 🎉
+                </p>
+                <p className="text-xs text-gray-400">
+                  Connect wallet • Play for FREE • Winners earn real rewards
+                </p>
+              </div>
+            </div>
             
             {/* Player Name - Inline */}
             <motion.div 
@@ -796,7 +891,12 @@ export default function HomePage() {
             </div>
 
             <div className="p-3 bg-cyber-dark border-t border-neon-blue/30">
-              {!playerName.trim() && (
+              {!connected && (
+                <div className="mb-2 text-center text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 rounded p-2">
+                  Connect wallet to chat
+                </div>
+              )}
+              {connected && !playerName.trim() && (
                 <div className="mb-2 text-center text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 rounded p-2">
                   Enter your name above to chat
                 </div>
@@ -807,16 +907,16 @@ export default function HomePage() {
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
-                  placeholder="Type message..."
-                  disabled={!playerName.trim()}
+                  placeholder={connected ? "Type message..." : "Connect wallet to chat"}
+                  disabled={!connected || !playerName.trim()}
                   className="flex-1 px-3 py-2 bg-cyber-darker/50 border border-neon-blue/30 rounded-lg focus:outline-none focus:border-neon-blue text-white text-sm placeholder-gray-600 disabled:opacity-50"
                   maxLength={200}
                 />
                 <motion.button
                   onClick={sendChatMessage}
-                  disabled={!playerName.trim() || !chatInput.trim()}
+                  disabled={!connected || !playerName.trim() || !chatInput.trim()}
                   className="px-4 py-2 bg-gradient-to-r from-neon-blue to-neon-purple text-white rounded-lg font-bold text-sm disabled:opacity-50"
-                  whileHover={{ scale: playerName.trim() && chatInput.trim() ? 1.05 : 1 }}
+                  whileHover={{ scale: connected && playerName.trim() && chatInput.trim() ? 1.05 : 1 }}
                 >
                   Send
                 </motion.button>
@@ -1124,6 +1224,21 @@ export default function HomePage() {
           </motion.div>
         </div>
       )}
+
+      {/* Wallet Connect Modal */}
+      <WalletConnectModal 
+        isOpen={showWalletModal} 
+        onClose={() => setShowWalletModal(false)}
+        onConnected={() => {
+          console.log('✅ Wallet connected successfully');
+        }}
+      />
+
+      {/* Transaction Log Modal */}
+      <TransactionLog 
+        isOpen={showTransactionLog}
+        onClose={() => setShowTransactionLog(false)}
+      />
     </main>
   );
 }

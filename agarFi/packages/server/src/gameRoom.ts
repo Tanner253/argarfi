@@ -18,6 +18,7 @@ export class GameRoom {
   playerTargets: Map<string, Vector2>;
   currentMapBounds: { minX: number; maxX: number; minY: number; maxY: number };
   onGameEnd?: () => void;
+  onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>;
   private lastWinCheckTime: number = 0;
   
   constructor(id: string, tier: string, io: Server) {
@@ -704,6 +705,18 @@ export class GameRoom {
     }
     
     console.log(`🏁 Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
+    
+    // Trigger winner payout if callback provided
+    if (winnerId && this.onWinnerDetermined) {
+      const winner = this.players.get(winnerId);
+      if (winner && !winner.isBot) {
+        // Trigger payout asynchronously (don't block game end)
+        this.onWinnerDetermined(winnerId, winner.name, this.id, this.tier, this.players.size)
+          .catch(error => {
+            console.error(`Failed to process winner payout:`, error);
+          });
+      }
+    }
     
     // Clear spectators immediately since game is over
     console.log(`Clearing ${this.gameState.spectators.size} spectators from ended game`);

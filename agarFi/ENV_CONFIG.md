@@ -39,5 +39,12 @@ GAME_MODE_4=25
 GAME_MODE_5=50
 GAME_MODE_6=100
 GAME_MODE_WHALE=500
+
+# Solana Configuration (Promotional Event - See PROMO_IMPLEMENTATION.md)
+SOLANA_RPC_URL=https://your-mainnet-rpc-endpoint-here
+SOLANA_NETWORK=mainnet-beta
+PLATFORM_WALLET_PRIVATE_KEY=your_base58_private_key_here_KEEP_SECRET
+USDC_MINT_ADDRESS=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+WINNER_REWARD_USDC=1
 ```
 

@@ -9,6 +9,7 @@ export class LobbyManager {
   private games: Map<string, GameRoom>;
   private io: Server;
   private botManager: BotManager;
+  private onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>;
 
   constructor(io: Server) {
     this.lobbies = new Map();
@@ -18,6 +19,13 @@ export class LobbyManager {
 
     // Initialize lobbies for each game mode
     this.initializeLobbies();
+  }
+
+  /**
+   * Set winner payout callback
+   */
+  setWinnerPayoutCallback(callback: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>): void {
+    this.onWinnerDetermined = callback;
   }
 
   /**
@@ -282,6 +290,11 @@ export class LobbyManager {
     });
 
     console.log(`Game ${game.id} started with ${lobby.players.size} players`);
+
+    // Set up winner payout callback
+    if (this.onWinnerDetermined) {
+      game.onWinnerDetermined = this.onWinnerDetermined;
+    }
 
     // Set up game end cleanup - remove game and reset lobby when done
     game.onGameEnd = () => {
