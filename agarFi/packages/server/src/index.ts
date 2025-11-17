@@ -12,11 +12,8 @@ app.use(express.json());
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? [process.env.CLIENT_URL || 'https://agarfi-client.onrender.com']
-      : '*',
+    origin: '*',
     methods: ['GET', 'POST'],
-    credentials: true,
   },
 });
 
@@ -75,10 +72,38 @@ io.on('connection', (socket) => {
           maxPlayers: status.maxPlayers,
           countdown: status.countdown,
           status: status.status,
+          spectatorCount: status.spectatorCount,
         });
       }
     } else {
       socket.emit('error', { message: result.message, code: 400 });
+    }
+  });
+
+  // Join as spectator (from homepage)
+  socket.on('joinAsSpectator', ({ tier }) => {
+    console.log(`🎥 NEW SPECTATOR request for tier ${tier} from socket ${socket.id}`);
+    const result = lobbyManager.joinAsSpectator(socket.id, tier);
+    
+    console.log(`Spectator join result:`, result);
+    
+    if (result.success && result.gameId) {
+      socket.join(result.gameId);
+      socket.emit('spectatorJoined', { gameId: result.gameId, tier });
+      console.log(`✅ SPECTATOR ${socket.id} joined game ${result.gameId}`);
+    } else {
+      console.error(`❌ SPECTATOR JOIN FAILED: ${result.message}`);
+      socket.emit('error', { message: result.message || 'Could not join as spectator', code: 400 });
+    }
+  });
+
+  // Player becomes spectator after dying
+  socket.on('becomeSpectator', ({ playerId, gameId }) => {
+    console.log(`💀 Player ${playerId} became spectator in game ${gameId}`);
+    const game = lobbyManager.getGame(gameId);
+    if (game) {
+      game.gameState.spectators.add(socket.id);
+      console.log(`Spectator count now: ${game.gameState.spectators.size}`);
     }
   });
 
@@ -106,49 +131,32 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Spectate game
-  socket.on('spectateGame', ({ lobbyId }) => {
-    socket.join(lobbyId);
-    
-    // Add to spectators list
-    const game = lobbyManager.getGame(lobbyId);
+  // Player leaves spectate mode
+  socket.on('leaveSpectate', ({ gameId }) => {
+    console.log(`Spectator ${socket.id} leaving game ${gameId}`);
+    const game = lobbyManager.getGame(gameId);
     if (game) {
-      game.addSpectator(socket.id);
-      socket.emit('gameStart', { startTime: Date.now(), gameId: lobbyId });
-      console.log(`Spectator joined ${lobbyId}. Total spectators: ${game.getSpectatorCount()}`);
-    } else {
-      console.log(`Spectator tried to join ${lobbyId} but no game running`);
+      game.gameState.spectators.delete(socket.id);
+      console.log(`Spectator count now: ${game.gameState.spectators.size}`);
     }
-  });
-
-  // Player leaves lobby
-  socket.on('leaveLobby', ({ playerId }) => {
-    lobbyManager.leaveLobby(playerId);
-    console.log(`Player ${playerId} left lobby`);
   });
 
   // Player disconnects
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
     
-    // Find and remove player from any lobby they're in
-    lobbyManager.handleDisconnect(socket.id);
+    // Remove from spectators in all games
+    for (const game of lobbyManager['games'].values()) {
+      if (game.gameState.spectators.has(socket.id)) {
+        game.gameState.spectators.delete(socket.id);
+        console.log(`Removed spectator ${socket.id} from game ${game.id} (${game.gameState.spectators.size} remaining)`);
+      }
+    }
   });
 });
 
 // Start lobby broadcast loop
 lobbyManager.broadcastLobbyUpdates();
-
-// Check for ended games periodically
-setInterval(() => {
-  const allGames = Array.from(lobbyManager['games'].values());
-  for (const game of allGames) {
-    if (!game.isRunning()) {
-      // Game has ended, cleanup
-      lobbyManager.handleGameEnd(game.getGameId());
-    }
-  }
-}, 5000); // Check every 5 seconds
 
 // Start server
 const PORT = config.server.port;
@@ -160,5 +168,40 @@ httpServer.listen(PORT, () => {
   console.log(`   Auto-fill Bots: ${config.dev.autoFillBots}`);
   console.log(`   NODE_ENV: ${process.env.NODE_ENV}`);
   console.log(`   MIN_PLAYERS_DEV: ${process.env.MIN_PLAYERS_DEV}`);
+});
+
+// Graceful shutdown handlers
+const shutdown = (signal: string) => {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+  
+  // Stop accepting new connections
+  httpServer.close(() => {
+    console.log('HTTP server closed');
+  });
+
+  // Shutdown lobby manager and all games
+  lobbyManager.shutdown();
+
+  // Give time for cleanup then exit
+  setTimeout(() => {
+    console.log('Graceful shutdown complete');
+    process.exit(0);
+  }, 2000);
+};
+
+// Handle various shutdown signals
+process.on('SIGINT', () => shutdown('SIGINT'));  // Ctrl+C
+process.on('SIGTERM', () => shutdown('SIGTERM')); // Kill command
+process.on('SIGUSR2', () => shutdown('SIGUSR2')); // Nodemon restart
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  shutdown('UNCAUGHT_EXCEPTION');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  shutdown('UNHANDLED_REJECTION');
 });
 

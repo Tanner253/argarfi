@@ -1,126 +1,146 @@
 import { GameRoom } from './gameRoom.js';
 
 export class BotManager {
-  private bots: Map<string, { gameRoom: GameRoom; intervalId: NodeJS.Timeout }>;
+  private bots: Map<string, { gameRoom: GameRoom; intervalId: NodeJS.Timeout; lastSplit: number }>;
 
   constructor() {
     this.bots = new Map();
   }
 
-  /**
-   * Add bot to game and start AI behavior
-   */
   addBot(botId: string, gameRoom: GameRoom): void {
-    // Simple AI: Random movement with occasional splits/ejects
     const intervalId = setInterval(() => {
       this.updateBot(botId, gameRoom);
-    }, 100); // Update bot AI every 100ms
+    }, 100);
 
-    this.bots.set(botId, { gameRoom, intervalId });
+    this.bots.set(botId, { gameRoom, intervalId, lastSplit: 0 });
   }
 
-  /**
-   * Update bot AI behavior
-   */
   private updateBot(botId: string, gameRoom: GameRoom): void {
     const player = gameRoom.players.get(botId);
-    if (!player || player.blobs.length === 0) {
+    const botData = this.bots.get(botId);
+    if (!player || player.blobs.length === 0 || !botData) {
       this.removeBot(botId);
       return;
     }
 
-    // Get largest blob position
+    const now = Date.now();
     const largestBlob = player.blobs.reduce((prev, current) => 
       current.mass > prev.mass ? current : prev
     );
 
-    // Store current target to smooth movement
-    if (!this.bots.has(botId)) return;
-    const botData = this.bots.get(botId);
-    if (!botData) return;
+    const botName = player.name;
+    const botPos = `(${Math.floor(largestBlob.x)}, ${Math.floor(largestBlob.y)})`;
 
-    // Store last target position for smoother movement
-    if (!(botData as any).lastTarget) {
-      (botData as any).lastTarget = { x: largestBlob.x, y: largestBlob.y };
+    // Get safe bounds
+    const bounds = gameRoom.currentMapBounds;
+    const SAFE_MARGIN = 200;
+
+    // Find nearest pellet that's WITHIN safe bounds
+    let nearestPellet: { x: number; y: number } | null = null;
+    let minPelletDist = Infinity;
+
+    for (const pellet of gameRoom.pellets.values()) {
+      // Skip pellets outside safe zone
+      if (pellet.x < bounds.minX + SAFE_MARGIN || pellet.x > bounds.maxX - SAFE_MARGIN ||
+          pellet.y < bounds.minY + SAFE_MARGIN || pellet.y > bounds.maxY - SAFE_MARGIN) {
+        continue;
+      }
+
+      const dist = Math.sqrt(
+        (pellet.x - largestBlob.x) ** 2 + (pellet.y - largestBlob.y) ** 2
+      );
+      if (dist < 500 && dist < minPelletDist) {
+        minPelletDist = dist;
+        nearestPellet = pellet;
+      }
     }
-    const lastTarget = (botData as any).lastTarget;
 
-    // Random movement with some strategy (but update target less frequently for smooth movement)
-    const strategy = Math.random();
+    // Find attackable player and nearby bots
+    let attackTarget: { x: number; y: number; mass: number; dist: number } | null = null;
+    let nearbyBots: Array<{ x: number; y: number }> = [];
 
-    if (strategy < 0.7) {
-      // Move toward nearest pellet (70% of the time)
-      let nearestPellet: { x: number; y: number } | null = null;
-      let minDistance = Infinity;
-
-      for (const pellet of gameRoom.pellets.values()) {
-        const dist = Math.sqrt(
-          (pellet.x - largestBlob.x) ** 2 + (pellet.y - largestBlob.y) ** 2
-        );
-        if (dist < minDistance && dist < 500) { // Only look at nearby pellets
-          minDistance = dist;
-          nearestPellet = pellet;
-        }
-      }
-
-      if (nearestPellet) {
-        // Smooth transition to new target
-        lastTarget.x += (nearestPellet.x - lastTarget.x) * 0.3;
-        lastTarget.y += (nearestPellet.y - lastTarget.y) * 0.3;
-      }
-    } else if (strategy < 0.85) {
-      // Move in current direction with slight variation (15% of the time)
-      const angle = Math.random() * Math.PI * 2;
-      const distance = 200;
-      lastTarget.x += Math.cos(angle) * distance * 0.1;
-      lastTarget.y += Math.sin(angle) * distance * 0.1;
+    for (const p of gameRoom.players.values()) {
+      if (p.id === botId) continue;
       
-      // Keep within map bounds
-      lastTarget.x = Math.max(100, Math.min(4900, lastTarget.x));
-      lastTarget.y = Math.max(100, Math.min(4900, lastTarget.y));
-    } else {
-      // Chase smaller players (15% of the time)
-      let targetBlob: { x: number; y: number } | null = null;
+      for (const blob of p.blobs) {
+        const dist = Math.sqrt(
+          (blob.x - largestBlob.x) ** 2 + (blob.y - largestBlob.y) ** 2
+        );
 
-      for (const p of gameRoom.players.values()) {
-        if (p.id === botId) continue;
-        for (const blob of p.blobs) {
-          if (blob.mass < largestBlob.mass * 0.9) {
-            const dist = Math.sqrt((blob.x - largestBlob.x) ** 2 + (blob.y - largestBlob.y) ** 2);
-            if (dist < 800) { // Only chase if close
-              targetBlob = blob;
-              break;
-            }
+        // Detect nearby bots (prevent clustering)
+        if (p.isBot && dist < 150) {
+          const massRatio = Math.abs(blob.mass - largestBlob.mass) / Math.max(largestBlob.mass, 1);
+          // Similar mass bots that can't eat each other
+          if (massRatio < 0.25) {
+            nearbyBots.push({ x: blob.x, y: blob.y });
           }
         }
-        if (targetBlob) break;
-      }
 
-      if (targetBlob) {
-        lastTarget.x += (targetBlob.x - lastTarget.x) * 0.2;
-        lastTarget.y += (targetBlob.y - lastTarget.y) * 0.2;
+        // Find prey to attack
+        if (blob.mass < largestBlob.mass * 0.85 && dist < 250) {
+          if (!attackTarget || dist < attackTarget.dist) {
+            attackTarget = { x: blob.x, y: blob.y, mass: blob.mass, dist };
+          }
+        }
       }
     }
 
-    // Send smoothed target to server
-    gameRoom.handlePlayerMove(botId, lastTarget.x, lastTarget.y);
+    // Decision making
+    let targetX: number;
+    let targetY: number;
 
-    // Occasionally split or eject (5% chance each tick, reduced from 10%)
-    if (Math.random() < 0.05 && player.blobs[0].mass > 100) {
-      const targetX = lastTarget.x;
-      const targetY = lastTarget.y;
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+
+    // Priority 1: Chase pellets (primary behavior)
+    if (nearestPellet) {
+      targetX = nearestPellet.x;
+      targetY = nearestPellet.y;
+    }
+    // Priority 2: Wander
+    else {
+      // Add avoidance randomness if near bots
+      let randomOffset = 400;
+      if (nearbyBots.length > 0) {
+        // Add extra randomness to break symmetry
+        randomOffset = 600;
+      }
       
-      if (Math.random() < 0.5) {
-        gameRoom.handlePlayerSplit(botId, targetX, targetY);
-      } else {
-        gameRoom.handlePlayerEject(botId, targetX, targetY);
+      targetX = centerX + (Math.random() - 0.5) * randomOffset;
+      targetY = centerY + (Math.random() - 0.5) * randomOffset;
+    }
+
+    // Calculate distance to target
+    const distToTarget = Math.sqrt(
+      (targetX - largestBlob.x) ** 2 + (targetY - largestBlob.y) ** 2
+    );
+
+    // STUCK RECOVERY: If bot hasn't moved, force new target
+    if (distToTarget < 5) {
+      console.log(`⚠️ ${botName} STUCK! Forcing wander to center`);
+      const centerX = (bounds.minX + bounds.maxX) / 2;
+      const centerY = (bounds.minY + bounds.maxY) / 2;
+      targetX = centerX + (Math.random() - 0.5) * 500;
+      targetY = centerY + (Math.random() - 0.5) * 500;
+    }
+
+    gameRoom.handlePlayerMove(botId, targetX, targetY);
+
+    // Split to attack - ONLY when very close
+    if (attackTarget && now - botData.lastSplit > 1200) {
+      const halfMass = largestBlob.mass / 2;
+      const canEat = attackTarget.mass < halfMass * 0.9;
+      // Much tighter range: 110-160 units (optimal hitting distance)
+      const inRange = attackTarget.dist >= 110 && attackTarget.dist <= 160;
+
+      if (canEat && inRange && largestBlob.mass > 60 && player.blobs.length < 8) {
+        gameRoom.handlePlayerSplit(botId, attackTarget.x, attackTarget.y);
+        botData.lastSplit = now;
+        console.log(`⚡ ${botName} split at ${Math.floor(attackTarget.dist)} units`);
       }
     }
   }
 
-  /**
-   * Remove bot from tracking
-   */
   removeBot(botId: string): void {
     const bot = this.bots.get(botId);
     if (bot) {
@@ -129,13 +149,15 @@ export class BotManager {
     }
   }
 
-  /**
-   * Remove all bots
-   */
   removeAllBots(): void {
     for (const [botId] of this.bots) {
       this.removeBot(botId);
     }
+  }
+
+  clearAll(): void {
+    console.log(`Clearing ${this.bots.size} bots...`);
+    this.removeAllBots();
   }
 }
 

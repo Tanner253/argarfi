@@ -23,9 +23,6 @@ export interface Blob {
   splitTime: number; // When this blob was created via split
   canMerge: boolean; // Can merge with other blobs from same player
   splitVelocity: Vector2; // Separate velocity for split launch
-  isMerging: boolean; // Currently in merge animation
-  mergeTargetId?: string; // ID of blob merging into
-  mergeStartTime?: number; // When merge animation started
 }
 
 export interface Player {
@@ -38,6 +35,7 @@ export interface Player {
   joinTime: number;
   lastInputTime: number;
   isBot: boolean;
+  boundaryTouchTime?: number; // When player started touching boundary
 }
 
 export interface Pellet {
@@ -45,9 +43,10 @@ export interface Pellet {
   x: number;
   y: number;
   mass: number;
-  vx?: number; // Velocity for ejected mass
-  vy?: number;
-  isEjected?: boolean;
+  color?: string; // Random color for pellets
+  velocity?: Vector2; // For ejected pellets that move (like splitVelocity)
+  createdAt?: number; // When pellet was created
+  splitVelocity?: Vector2; // Launch velocity for ejected pellets
 }
 
 export interface GameConfig {
@@ -71,6 +70,7 @@ export interface Lobby {
   id: string;
   tier: string;
   players: Map<string, Player>;
+  spectators: Set<string>; // Socket IDs of spectators
   status: 'waiting' | 'countdown' | 'playing' | 'finished';
   countdownStartTime: number | null;
   gameStartTime: number | null;
@@ -80,6 +80,7 @@ export interface Lobby {
 export interface GameState {
   players: Map<string, Player>;
   pellets: Map<string, Pellet>;
+  spectators: Set<string>; // Socket IDs of spectators
   startTime: number;
   lastTickTime: number;
 }

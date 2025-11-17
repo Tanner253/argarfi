@@ -16,10 +16,12 @@ export const config = {
   game: {
     mapWidth: parseInt(process.env.MAP_WIDTH || '5000'),
     mapHeight: parseInt(process.env.MAP_HEIGHT || '5000'),
-    startingMass: parseInt(process.env.STARTING_MASS || '100'),
+    startingMass: parseInt(process.env.STARTING_MASS || '250'),
     pelletCount: parseInt(process.env.PELLET_COUNT || '500'),
-    maxGameDuration: parseInt(process.env.MAX_GAME_DURATION_MS || '300000'),
+    maxGameDuration: parseInt(process.env.MAX_GAME_DURATION_MS || '1800000'),
     spatialHashGridSize: parseInt(process.env.SPATIAL_HASH_GRID_SIZE || '200'),
+    shrinkingEnabled: process.env.SHRINKING_ENABLED !== 'false', // Default true
+    shrinkStartPercent: parseFloat(process.env.SHRINK_START_PERCENT || '0.5'), // Start at 50% time
   },
   lobby: {
     minPlayers: parseInt(process.env.MIN_PLAYERS_DEV || process.env.LOBBY_MIN_PLAYERS || '10'),

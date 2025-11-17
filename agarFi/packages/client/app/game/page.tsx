@@ -12,13 +12,29 @@ interface Blob {
   mass: number;
   velocity: { x: number; y: number };
   color: string;
-  isMerging?: boolean;
-  mergeTargetId?: string;
 }
 
 interface Pellet {
   x: number;
   y: number;
+  color?: string;
+}
+
+interface KillAnimation {
+  blobId: string;
+  victimX: number;
+  victimY: number;
+  startTime: number;
+}
+
+interface MergeAnimation {
+  blobId: string;
+  startTime: number;
+}
+
+interface ShrinkAnimation {
+  blobId: string;
+  startTime: number;
 }
 
 interface LeaderboardEntry {
@@ -61,72 +77,116 @@ export default function GamePage() {
   const [gameEnd, setGameEnd] = useState<GameEndResult | null>(null);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
   const [gameId, setGameId] = useState<string>('');
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [camera, setCamera] = useState({ x: 2500, y: 2500, zoom: 1 });
   const [gameStarted, setGameStarted] = useState(false);
   const [lobbyStatus, setLobbyStatus] = useState({ players: 1, max: 25, countdown: null as number | null });
-  const [isSpectator, setIsSpectator] = useState(false);
-  const [isEliminated, setIsEliminated] = useState(false);
-  const [followingPlayerId, setFollowingPlayerId] = useState<string>('');
+  const [isSpectating, setIsSpectating] = useState(false);
+  const [spectatingPlayerId, setSpectatingPlayerId] = useState<string>('');
   const [spectatorCount, setSpectatorCount] = useState(0);
-  const [particles, setParticles] = useState<Array<{ x: number; y: number; vx: number; vy: number; color: string; life: number }>>([]);
+  const [leaderboardVisible, setLeaderboardVisible] = useState(true);
+  const [killAnimations, setKillAnimations] = useState<KillAnimation[]>([]);
+  const [mergeAnimations, setMergeAnimations] = useState<MergeAnimation[]>([]);
+  const [shrinkAnimations, setShrinkAnimations] = useState<ShrinkAnimation[]>([]);
+  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'info' | 'error' | 'success' | 'warning' } | null>(null);
+  const [mapBounds, setMapBounds] = useState<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
+  const [boundaryWarning, setBoundaryWarning] = useState<{ startTime: number } | null>(null);
+
+  const mousePosRef = useRef({ x: 2500, y: 2500 });
+  const mouseScreenPosRef = useRef({ x: 0, y: 0 });
+  const gameIdRef = useRef<string>('');
+  const playerIdRef = useRef<string>('');
+  const gameStartedRef = useRef<boolean>(false);
+  const cameraRef = useRef(camera);
+
+  // Update camera ref when camera changes
+  useEffect(() => {
+    cameraRef.current = camera;
+  }, [camera]);
 
   useEffect(() => {
     const playerId = localStorage.getItem('playerId');
     const playerName = localStorage.getItem('playerName');
     const tier = localStorage.getItem('selectedTier');
     const existingGameId = localStorage.getItem('currentGameId');
+    const spectateMode = localStorage.getItem('spectateMode');
 
-    if (!playerId || !playerName || !tier) {
-      router.push('/');
-      return;
+    console.log('🔍 Game page useEffect - spectateMode:', spectateMode, 'tier:', tier);
+
+    // DON'T clear spectate flag yet - need it for socket connection
+    const isSpectator = spectateMode === 'true';
+
+    if (isSpectator) {
+      // Joining as spectator
+      console.log('🎥 SPECTATOR MODE ACTIVE - tier:', tier);
+      if (!tier) {
+        console.error('❌ No tier selected for spectating, redirecting');
+        router.push('/');
+        return;
+      }
+      // Set spectating immediately
+      setIsSpectating(true);
+    } else {
+      // Joining as player
+      console.log('🎮 PLAYER MODE - playerId:', playerId);
+      if (!playerId || !playerName || !tier) {
+        console.error('❌ Missing player credentials, redirecting');
+        router.push('/');
+        return;
+      }
+      setMyPlayerId(playerId);
+      playerIdRef.current = playerId;
     }
 
-    const spectatorMode = localStorage.getItem('spectatorMode') === 'true';
-    setIsSpectator(spectatorMode);
-
-    setMyPlayerId(playerId || 'spectator');
-    playerIdRef.current = playerId || 'spectator';
-
     // Connect to Socket.io
-    const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
-    const socket = io(SOCKET_URL);
+    console.log('🔌 Connecting to Socket.io server...');
+    const socket = io('http://localhost:3001');
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('Connected to server');
+      console.log('✅ Socket connected! ID:', socket.id);
       
-      if (spectatorMode) {
+      if (isSpectator) {
         // Join as spectator
-        const lobbyId = `lobby_${tier}`;
-        socket.emit('spectateGame', { lobbyId });
-        setGameId(lobbyId);
-        setGameStarted(true);
-        socket.emit('join', lobbyId);
-        console.log('Joined as spectator');
-      } else if (existingGameId && playerId) {
+        console.log('🎥 Emitting joinAsSpectator event for tier:', tier);
+        socket.emit('joinAsSpectator', { tier });
+        // Now clear the flag
+        localStorage.removeItem('spectateMode');
+      } else if (existingGameId) {
         // Try to reconnect to existing game
         console.log('Attempting to reconnect to game:', existingGameId);
         socket.emit('playerReconnect', { playerId, gameId: existingGameId });
-      } else if (playerId && playerName) {
-        // Join lobby as player
+      } else {
+        // Join lobby
+        console.log('Joining lobby for tier:', tier);
         socket.emit('playerJoinLobby', { playerId, playerName, tier });
       }
+    });
+
+    socket.on('spectatorJoined', ({ gameId, tier: joinedTier }) => {
+      console.log('✅ Successfully joined as spectator for game:', gameId);
+      setGameId(gameId);
+      gameIdRef.current = gameId;
+      setGameStarted(true);
+      gameStartedRef.current = true;
+      setIsSpectating(true);
+      
+      // Join the game room to receive updates
+      socket.emit('join', gameId);
+      console.log('Spectator joined room:', gameId);
+      
+      // Note: spectatingPlayerId will be set when first gameState arrives
     });
 
     socket.on('lobbyJoined', ({ lobbyId, tier: joinedTier }) => {
       console.log('Joined lobby:', lobbyId);
       setGameId(lobbyId);
       gameIdRef.current = lobbyId;
-      socket.emit('join', lobbyId); // Join Socket.io room
-      
-      // Request immediate lobby status
+      socket.emit('join', lobbyId);
       socket.emit('requestLobbyStatus', { lobbyId });
     });
 
     socket.on('lobbyUpdate', ({ tier, playersLocked, maxPlayers, countdown, status }) => {
       const currentTier = localStorage.getItem('selectedTier');
-      // Only update if this update is for our tier
       if (tier === currentTier) {
         setLobbyStatus({ players: playersLocked, max: maxPlayers, countdown });
       }
@@ -142,14 +202,27 @@ export default function GamePage() {
     });
 
     socket.on('gameNotFound', () => {
-      localStorage.removeItem('currentGameId');
-      // Rejoin lobby
-      const playerId = localStorage.getItem('playerId');
-      const playerName = localStorage.getItem('playerName');
-      const tier = localStorage.getItem('selectedTier');
-      if (socketRef.current && playerId && playerName && tier) {
-        socketRef.current.emit('playerJoinLobby', { playerId, playerName, tier });
-      }
+      console.log('Game not found, redirecting to lobby NOW');
+      socket.disconnect();
+      localStorage.clear();
+      // Immediate redirect
+      window.location.href = '/';
+    });
+
+    socket.on('serverShutdown', ({ message }) => {
+      console.log('Server shutdown, redirecting to lobby NOW');
+      socket.disconnect();
+      localStorage.clear();
+      // Immediate redirect
+      window.location.href = '/';
+    });
+
+    socket.on('lobbyCancelled', ({ message }) => {
+      console.log('Lobby cancelled, redirecting to lobby NOW');
+      socket.disconnect();
+      localStorage.clear();
+      // Immediate redirect
+      window.location.href = '/';
     });
 
     socket.on('gameStart', ({ startTime, gameId: startedGameId }) => {
@@ -162,119 +235,195 @@ export default function GamePage() {
       localStorage.setItem('currentGameId', finalGameId);
     });
 
-    socket.on('gameState', ({ blobs: newBlobs, pellets: newPellets, leaderboard: newLeaderboard, spectatorCount: specCount }) => {
+    socket.on('boundaryWarning', ({ startTime }) => {
+      console.log('⚠️ BOUNDARY WARNING - 3 second countdown!');
+      setBoundaryWarning({ startTime });
+    });
+
+    socket.on('boundarySafe', () => {
+      console.log('✅ Moved away from boundary');
+      setBoundaryWarning(null);
+    });
+
+    socket.on('boundaryKilled', () => {
+      console.log('💀 Killed by boundary!');
+      setBoundaryWarning(null);
+    });
+
+    socket.on('playerEliminated', ({ killerId, killerName }) => {
+      console.log(`💀 YOU DIED!`);
+      
+      setIsSpectating(true);
+      // Don't set spectatingPlayerId here - let auto-select choose leader
+      setBoundaryWarning(null);
+      playerIdRef.current = '';
+      
+      if (socketRef.current && gameIdRef.current) {
+        socketRef.current.emit('becomeSpectator', { 
+          playerId: myPlayerId,
+          gameId: gameIdRef.current 
+        });
+      }
+      
+      console.log('✅ Spectator mode active');
+    });
+
+    // Server tells us when a blob kills another
+    socket.on('blobKilled', ({ killerBlobId, victimBlobId, victimX, victimY }) => {
+      const now = Date.now();
+      
+      // Killer gets sun rays animation
+      setKillAnimations(prev => [...prev, {
+        blobId: killerBlobId,
+        victimX,
+        victimY,
+        startTime: now,
+      }]);
+
+      // Victim gets shrink animation
+      setShrinkAnimations(prev => [...prev, {
+        blobId: victimBlobId,
+        startTime: now,
+      }]);
+    });
+
+    // Server tells us when blobs merge
+    socket.on('blobMerged', ({ remainingBlobId, mergedBlobId }) => {
+      const now = Date.now();
+      
+      // Remaining blob gets shrink-grow animation
+      setMergeAnimations(prev => [...prev, {
+        blobId: remainingBlobId,
+        startTime: now,
+      }]);
+    });
+
+    socket.on('gameState', ({ blobs: newBlobs, pellets: newPellets, leaderboard: newLeaderboard, spectatorCount: specCount, mapBounds: newMapBounds }) => {
       setBlobs(newBlobs);
       setPellets(newPellets);
       setLeaderboard(newLeaderboard);
       if (specCount !== undefined) {
         setSpectatorCount(specCount);
       }
+      if (newMapBounds) {
+        setMapBounds(newMapBounds);
+      }
 
-      const currentPlayerId = playerIdRef.current;
-
-      // Check if player is eliminated
-      if (!spectatorMode && currentPlayerId && currentPlayerId !== 'spectator') {
-        const myBlobs = newBlobs.filter((b: Blob) => b.playerId === currentPlayerId);
-        
-        if (myBlobs.length === 0 && newBlobs.length > 0) {
-          // Player eliminated, become spectator
-          console.log('Player eliminated, switching to spectator mode');
-          setIsEliminated(true);
-          setIsSpectator(true);
-          // Follow leader
-          if (leaderboard.length > 0) {
-            setFollowingPlayerId(leaderboard[0].id);
+      // Check if player is dead (only if not already spectating)
+      if (!isSpectating && playerId) {
+        const myBlobs = newBlobs.filter((b: Blob) => b.playerId === playerId);
+        if (myBlobs.length === 0 && gameStartedRef.current) {
+          // Player died but didn't get elimination event - spectate leader
+          setIsSpectating(true);
+          if (newLeaderboard.length > 0) {
+            setSpectatingPlayerId(newLeaderboard[0].id);
           }
         }
       }
 
-      // Update camera - moved to separate effect below for better control
-    });
-
-    socket.on('playerEliminated', ({ eliminatedId, eliminatedBy, x, y }: any) => {
-      console.log('Player eliminated:', eliminatedId);
-      
-      // Create particle explosion
-      const newParticles = [];
-      for (let i = 0; i < 20; i++) {
-        const angle = (Math.PI * 2 * i) / 20;
-        const speed = 100 + Math.random() * 100;
-        newParticles.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          color: ['#FF6B6B', '#FFD700', '#FF10F0', '#00F0FF'][Math.floor(Math.random() * 4)],
-          life: 1,
-        });
+      // ONLY auto-select if we don't have anyone selected
+      if (isSpectating && !spectatingPlayerId && newLeaderboard.length > 0) {
+        const leader = newLeaderboard[0];
+        console.log('👁️ AUTO-SELECTING leader:', leader.name, leader.id);
+        setSpectatingPlayerId(leader.id);
       }
-      setParticles(prev => [...prev, ...newParticles]);
+
+      // Check if current spectated player is still alive
+      if (isSpectating && spectatingPlayerId) {
+        const current = newLeaderboard.find(p => p.id === spectatingPlayerId);
+        const currentBlobs = newBlobs.filter((b: Blob) => b.playerId === spectatingPlayerId);
+        
+        console.log(`📊 Current spectate: ${spectatingPlayerId}, Found in leaderboard: ${!!current}, Has blobs: ${currentBlobs.length}`);
+        
+        // ONLY auto-switch if player is confirmed dead
+        if (!current || current.mass === 0 || currentBlobs.length === 0) {
+          const alivePlayers = newLeaderboard.filter(p => p.mass > 0);
+          if (alivePlayers.length > 0) {
+            console.log(`⚠️ ${spectatingPlayerId} is DEAD, switching to ${alivePlayers[0].name}`);
+            setSpectatingPlayerId(alivePlayers[0].id);
+          }
+        }
+      }
+
+      // Camera update for non-spectators (playing mode)
+      if (!isSpectating && playerId) {
+        const targetBlobs = newBlobs.filter((b: Blob) => b.playerId === playerId);
+        if (targetBlobs.length > 0) {
+          const avgX = targetBlobs.reduce((sum: number, b: Blob) => sum + b.x, 0) / targetBlobs.length;
+          const avgY = targetBlobs.reduce((sum: number, b: Blob) => sum + b.y, 0) / targetBlobs.length;
+          const totalMass = targetBlobs.reduce((sum: number, b: Blob) => sum + b.mass, 0);
+          
+          const zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
+          setCamera({ x: avgX, y: avgY, zoom });
+        }
+      }
+      // Spectator camera update handled by separate useEffect
     });
 
     socket.on('gameEnd', (result: GameEndResult) => {
       console.log('Game ended:', result);
       setGameEnd(result);
-      localStorage.removeItem('currentGameId'); // Clear game ID on end
-    });
-
-    socket.on('lobbyCancelled', ({ message }) => {
-      alert(message);
-      localStorage.removeItem('currentGameId');
-      router.push('/');
+      // Don't clear localStorage yet - need it for game end screen
+      
+      // Auto-redirect to lobby after 10 seconds
+      setTimeout(() => {
+        console.log('Auto-redirecting to lobby after game end');
+        localStorage.clear();
+        window.location.href = '/';
+      }, 10000);
     });
 
     socket.on('error', ({ message }) => {
-      console.error('Server error:', message);
-      alert(message);
-      localStorage.removeItem('currentGameId');
-      router.push('/');
+      console.error('❌ Server error:', message);
+      
+      // Don't redirect if we're trying to spectate - show toast instead
+      if (spectateMode === 'true') {
+        setToastMessage({ message: `Cannot spectate: ${message}`, type: 'error' });
+        console.log('Spectate failed, staying on page to show error');
+        return;
+      }
+      
+      socket.disconnect();
+      localStorage.clear();
+      // Immediate redirect for non-spectator errors
+      window.location.href = '/';
     });
 
     return () => {
-      // Cleanup when leaving page
-      if (playerId && !localStorage.getItem('spectatorMode')) {
-        socket.emit('leaveLobby', { playerId });
+      console.log('🔌 Disconnecting socket and cleaning up');
+      
+      // Remove from spectators if we were spectating
+      if (isSpectating && gameIdRef.current) {
+        socket.emit('leaveSpectate', { gameId: gameIdRef.current });
       }
+      
       socket.disconnect();
-      localStorage.removeItem('currentGameId');
     };
   }, [router]);
 
-  // Update camera based on spectator mode or player position
+  // Auto-dismiss toast after 3 seconds
   useEffect(() => {
-    if (blobs.length === 0) return;
-
-    let targetPlayerId = myPlayerId;
-    
-    if (isSpectator || isEliminated) {
-      // Follow selected player or leader
-      targetPlayerId = followingPlayerId || (leaderboard.length > 0 ? leaderboard[0].id : '');
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 3000);
+      return () => clearTimeout(timer);
     }
+  }, [toastMessage]);
 
-    const followBlobs = blobs.filter((b: Blob) => b.playerId === targetPlayerId);
-    if (followBlobs.length > 0) {
-      const avgX = followBlobs.reduce((sum: number, b: Blob) => sum + b.x, 0) / followBlobs.length;
-      const avgY = followBlobs.reduce((sum: number, b: Blob) => sum + b.y, 0) / followBlobs.length;
-      const totalMass = followBlobs.reduce((sum: number, b: Blob) => sum + b.mass, 0);
-      
+  // SPECTATOR CAMERA LOCK - Updates whenever blobs or spectated player changes
+  useEffect(() => {
+    if (!isSpectating || !spectatingPlayerId || blobs.length === 0) return;
+
+    const targetBlobs = blobs.filter(b => b.playerId === spectatingPlayerId);
+    
+    if (targetBlobs.length > 0) {
+      const avgX = targetBlobs.reduce((sum, b) => sum + b.x, 0) / targetBlobs.length;
+      const avgY = targetBlobs.reduce((sum, b) => sum + b.y, 0) / targetBlobs.length;
+      const totalMass = targetBlobs.reduce((sum, b) => sum + b.mass, 0);
       const zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
       
       setCamera({ x: avgX, y: avgY, zoom });
     }
-  }, [blobs, followingPlayerId, isSpectator, isEliminated, myPlayerId, leaderboard]);
-
-  // Track mouse position
-  const mousePosRef = useRef({ x: 2500, y: 2500 });
-  const mouseScreenPosRef = useRef({ x: 0, y: 0 }); // Screen position (doesn't change with camera)
-  const gameIdRef = useRef<string>('');
-  const playerIdRef = useRef<string>('');
-  const gameStartedRef = useRef<boolean>(false);
-  const cameraRef = useRef(camera);
-
-  // Update camera ref when camera changes
-  useEffect(() => {
-    cameraRef.current = camera;
-  }, [camera]);
+  }, [blobs, isSpectating, spectatingPlayerId]);
 
   // Update mouse screen position on move
   useEffect(() => {
@@ -284,7 +433,6 @@ export default function GamePage() {
       const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
       
-      // Store SCREEN position (relative to canvas)
       mouseScreenPosRef.current = {
         x: e.clientX - rect.left,
         y: e.clientY - rect.top,
@@ -293,23 +441,18 @@ export default function GamePage() {
 
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []); // No dependencies - mouse position independent of game state
+  }, []);
 
-  // Continuously calculate and send target position - NEVER stops until unmount
+  // Movement system
   useEffect(() => {
-    console.log('Movement system initialized');
-    
     const interval = setInterval(() => {
       const socket = socketRef.current;
       const canvas = canvasRef.current;
       
-      // Only send if game has started AND not spectating/eliminated
-      if (!isSpectator && !isEliminated && gameStartedRef.current && socket?.connected && gameIdRef.current && playerIdRef.current && canvas) {
-        // Calculate world position from screen position
+      if (!isSpectating && gameStartedRef.current && socket?.connected && gameIdRef.current && playerIdRef.current && canvas) {
         const cam = cameraRef.current;
         const screenPos = mouseScreenPosRef.current;
         
-        // Convert screen to world coordinates
         const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
         const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
         
@@ -320,26 +463,54 @@ export default function GamePage() {
           gameId: gameIdRef.current,
         });
       }
-    }, 16); // Send position 60 times per second (match server tick rate)
+    }, 50);
 
-    return () => {
-      clearInterval(interval);
-    };
-  }, [isSpectator, isEliminated]); // Update when spectator state changes
+    return () => clearInterval(interval);
+  }, [isSpectating]);
 
   // Handle keyboard controls
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      // Don't allow controls if spectating or eliminated
-      if (isSpectator || isEliminated) return;
-      
+      // Spectator controls - cycle through players (ALWAYS available when spectating)
+      if (isSpectating) {
+        if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+          e.preventDefault();
+          console.log('⌨️ Arrow key pressed, isSpectating:', isSpectating, 'spectatingPlayerId:', spectatingPlayerId);
+          
+          const alivePlayers = leaderboard.filter(p => p.mass > 0);
+          console.log(`Found ${alivePlayers.length} alive players to spectate`);
+          
+          if (alivePlayers.length === 0) {
+            console.log('❌ No alive players to switch to');
+            return;
+          }
+          
+          const currentIndex = alivePlayers.findIndex(p => p.id === spectatingPlayerId);
+          console.log(`Current spectating index: ${currentIndex}`);
+          
+          let newIndex;
+          if (e.code === 'ArrowRight') {
+            newIndex = (currentIndex + 1) % alivePlayers.length;
+          } else {
+            newIndex = (currentIndex - 1 + alivePlayers.length) % alivePlayers.length;
+          }
+          
+          const newPlayer = alivePlayers[newIndex];
+          console.log(`✅ MANUAL SWITCH via keyboard to ${newPlayer.name} (${newPlayer.id})`);
+          console.log(`   Previous: ${spectatingPlayerId}, New: ${newPlayer.id}`);
+          setSpectatingPlayerId(newPlayer.id);
+        }
+        return; // Don't process game controls if spectating
+      }
+
+      // Game controls (only if NOT spectating)
+
       if (!socketRef.current || !gameIdRef.current || !playerIdRef.current) return;
       if (!canvasRef.current) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
         
-        // Calculate direction toward mouse
         const canvas = canvasRef.current;
         const cam = cameraRef.current;
         const screenPos = mouseScreenPosRef.current;
@@ -358,7 +529,6 @@ export default function GamePage() {
       if (e.code === 'KeyW') {
         e.preventDefault();
         
-        // Calculate direction toward mouse
         const canvas = canvasRef.current;
         const cam = cameraRef.current;
         const screenPos = mouseScreenPosRef.current;
@@ -377,7 +547,7 @@ export default function GamePage() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isSpectator, isEliminated]);
+  }, [isSpectating, spectatingPlayerId, leaderboard, blobs]);
 
   // Canvas rendering loop
   useEffect(() => {
@@ -393,7 +563,7 @@ export default function GamePage() {
     let animationFrameId: number;
 
     const render = () => {
-      // Clear canvas
+      // Clear canvas with dark theme
       ctx.fillStyle = '#1a1a1a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -405,205 +575,194 @@ export default function GamePage() {
       ctx.scale(camera.zoom, camera.zoom);
       ctx.translate(-camera.x, -camera.y);
 
-      // Draw grid (less frequently for better performance)
+      // Draw grid (subtle)
       ctx.strokeStyle = '#333';
       ctx.lineWidth = 1 / camera.zoom;
-      const gridSpacing = 250; // Larger spacing = better performance
-      for (let x = 0; x <= 5000; x += gridSpacing) {
+      for (let x = 0; x <= 5000; x += 100) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, 5000);
         ctx.stroke();
       }
-      for (let y = 0; y <= 5000; y += gridSpacing) {
+      for (let y = 0; y <= 5000; y += 100) {
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(5000, y);
         ctx.stroke();
       }
 
-      // Draw pellets as diamonds (50% bigger)
+      // Draw shrinking map boundaries (red danger zone outside)
+      if (mapBounds && (mapBounds.minX > 0 || mapBounds.maxX < 5000 || mapBounds.minY > 0 || mapBounds.maxY < 5000)) {
+        // Red tint for danger zone
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+        
+        // Left danger zone
+        if (mapBounds.minX > 0) {
+          ctx.fillRect(0, 0, mapBounds.minX, 5000);
+        }
+        // Right danger zone
+        if (mapBounds.maxX < 5000) {
+          ctx.fillRect(mapBounds.maxX, 0, 5000 - mapBounds.maxX, 5000);
+        }
+        // Top danger zone
+        if (mapBounds.minY > 0) {
+          ctx.fillRect(mapBounds.minX, 0, mapBounds.maxX - mapBounds.minX, mapBounds.minY);
+        }
+        // Bottom danger zone
+        if (mapBounds.maxY < 5000) {
+          ctx.fillRect(mapBounds.minX, mapBounds.maxY, mapBounds.maxX - mapBounds.minX, 5000 - mapBounds.maxY);
+        }
+        
+        // Draw boundary lines
+        ctx.strokeStyle = '#FF0000';
+        ctx.lineWidth = 6 / camera.zoom;
+        ctx.setLineDash([]);
+        ctx.strokeRect(mapBounds.minX, mapBounds.minY, mapBounds.maxX - mapBounds.minX, mapBounds.maxY - mapBounds.minY);
+      }
+
+      // Draw pellets as diamonds
       pellets.forEach(pellet => {
-        ctx.fillStyle = '#4ECDC4';
+        const pelletSize = 3; // Reduced to 50% of previous size
+        
+        ctx.fillStyle = pellet.color || '#4ECDC4';
         ctx.beginPath();
-        const size = 3; // 50% bigger than 2
-        // Diamond shape
-        ctx.moveTo(pellet.x, pellet.y - size);
-        ctx.lineTo(pellet.x + size, pellet.y);
-        ctx.lineTo(pellet.x, pellet.y + size);
-        ctx.lineTo(pellet.x - size, pellet.y);
+        ctx.moveTo(pellet.x, pellet.y - pelletSize); // Top
+        ctx.lineTo(pellet.x + pelletSize, pellet.y); // Right
+        ctx.lineTo(pellet.x, pellet.y + pelletSize); // Bottom
+        ctx.lineTo(pellet.x - pelletSize, pellet.y); // Left
         ctx.closePath();
         ctx.fill();
+        
+        // Add slight glow with pellet's color
+        ctx.strokeStyle = pellet.color || '#4ECDC4';
+        ctx.lineWidth = 0.5 / camera.zoom;
+        ctx.stroke();
       });
 
-      // Draw blobs - NO interpolation, render server position directly
+      const now = Date.now();
+      
+      // Clean up old animations (400ms for kill, 300ms for shrink, 500ms for merge)
+      setKillAnimations(prev => prev.filter(a => now - a.startTime < 400));
+      setShrinkAnimations(prev => prev.filter(a => now - a.startTime < 300));
+      setMergeAnimations(prev => prev.filter(a => now - a.startTime < 500));
+
+      // Draw blobs
       blobs.forEach(blob => {
-        // If merging, pull toward target
-        let renderX = blob.x;
-        let renderY = blob.y;
+        const baseRadius = Math.sqrt(blob.mass / Math.PI) * 3;
+        let radius = baseRadius;
         
-        if (blob.isMerging && blob.mergeTargetId) {
-          const targetBlob = blobs.find(b => b.id === blob.mergeTargetId);
-          if (targetBlob) {
-            // Pull toward merge target during animation
-            renderX += (targetBlob.x - blob.x) * 0.3;
-            renderY += (targetBlob.y - blob.y) * 0.3;
+        // Check for merge animation
+        const mergeAnim = mergeAnimations.find(a => a.blobId === blob.id);
+        if (mergeAnim) {
+          const elapsed = now - mergeAnim.startTime;
+          const progress = Math.min(1, elapsed / 500);
+          // Shrink then grow: 1.0 -> 0.7 -> 1.0
+          const scale = 1 - 0.3 * Math.sin(progress * Math.PI);
+          radius = baseRadius * scale;
+          
+          // Neon glow effect during merge
+          ctx.save();
+          const glowAlpha = Math.sin(progress * Math.PI) * 0.6;
+          ctx.globalAlpha = glowAlpha;
+          ctx.shadowBlur = 30 / camera.zoom;
+          ctx.shadowColor = '#00F0FF'; // Neon blue
+          ctx.fillStyle = '#00F0FF';
+          ctx.beginPath();
+          ctx.arc(blob.x, blob.y, radius * 1.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Check for shrink animation (victim being eaten)
+        const shrinkAnim = shrinkAnimations.find(a => a.blobId === blob.id);
+        if (shrinkAnim) {
+          const elapsed = now - shrinkAnim.startTime;
+          const progress = Math.min(1, elapsed / 300);
+          // Shrink to 0 with fade
+          radius = baseRadius * (1 - progress);
+          
+          // Fade out the blob
+          ctx.globalAlpha = 1 - progress;
+        }
+        
+        // Check for kill animation (sun rays + absorption)
+        const killAnim = killAnimations.find(a => a.blobId === blob.id);
+        if (killAnim) {
+          const elapsed = now - killAnim.startTime;
+          const progress = Math.min(1, elapsed / 400);
+          
+          // Killer blob shrinks then grows (absorption effect)
+          const absorptionScale = 1 - 0.2 * Math.sin(progress * Math.PI);
+          radius = baseRadius * absorptionScale;
+          
+          // Fade in then fade out
+          let alpha;
+          if (progress < 0.2) {
+            // Fade in
+            alpha = progress / 0.2;
+          } else {
+            // Fade out
+            alpha = 1 - ((progress - 0.2) / 0.8);
           }
+          
+          // Draw 8 clean neon sun rays with gap from blob
+          ctx.save();
+          ctx.globalAlpha = alpha * 0.9;
+          ctx.shadowBlur = 10 / camera.zoom;
+          ctx.shadowColor = '#39FF14';
+          ctx.strokeStyle = '#39FF14';
+          ctx.lineWidth = 2 / camera.zoom;
+          ctx.lineCap = 'round';
+          
+          for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            const rayStart = radius * 1.25; // Gap between blob and rays
+            const rayEnd = radius * 1.65;   // Shorter, cleaner rays
+            
+            ctx.beginPath();
+            ctx.moveTo(
+              blob.x + Math.cos(angle) * rayStart,
+              blob.y + Math.sin(angle) * rayStart
+            );
+            ctx.lineTo(
+              blob.x + Math.cos(angle) * rayEnd,
+              blob.y + Math.sin(angle) * rayEnd
+            );
+            ctx.stroke();
+          }
+          
+          ctx.restore();
         }
+        
+        // Draw blob (only if not completely shrunk)
+        if (radius > 0) {
+          ctx.fillStyle = blob.color;
+          ctx.beginPath();
+          ctx.arc(blob.x, blob.y, radius, 0, Math.PI * 2);
+          ctx.fill();
 
-        // Match server-side radius calculation (3x bigger)
-        const radius = Math.sqrt(blob.mass / Math.PI) * 3;
-        
-        // Draw blob at server position (or merge position)
-        ctx.fillStyle = blob.color;
-        
-        // Add pulsing effect if merging
-        if (blob.isMerging) {
-          ctx.globalAlpha = 0.7 + Math.sin(Date.now() / 100) * 0.3;
+          // Draw border
+          ctx.strokeStyle = blob.playerId === myPlayerId ? '#FFD700' : (isSpectating && blob.playerId === spectatingPlayerId ? '#4ECDC4' : '#333');
+          ctx.lineWidth = 3 / camera.zoom;
+          ctx.stroke();
         }
         
-        ctx.beginPath();
-        ctx.arc(renderX, renderY, radius, 0, Math.PI * 2);
-        ctx.fill();
+        // Reset alpha after shrink animation
         ctx.globalAlpha = 1;
-
-        // Draw border
-        ctx.strokeStyle = blob.playerId === myPlayerId ? '#FFD700' : blob.isMerging ? '#BB86FC' : '#333';
-        ctx.lineWidth = blob.isMerging ? 4 / camera.zoom : 3 / camera.zoom;
-        ctx.stroke();
 
         // Draw player name
         const player = leaderboard.find(p => p.id === blob.playerId);
-        if (player && !blob.isMerging) {
+        if (player) {
           ctx.fillStyle = '#fff';
           ctx.font = `${Math.max(12, 14 / camera.zoom)}px Arial`;
           ctx.textAlign = 'center';
-          ctx.fillText(player.name, renderX, renderY + radius + 20 / camera.zoom);
+          ctx.fillText(player.name, blob.x, blob.y + radius + 20 / camera.zoom);
         }
       });
 
-      // Draw particles
-      ctx.save();
-      particles.forEach((particle, idx) => {
-        if (particle.life > 0) {
-          ctx.fillStyle = particle.color;
-          ctx.globalAlpha = particle.life;
-          ctx.beginPath();
-          ctx.arc(particle.x, particle.y, 3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-          
-          // Update particle
-          particle.x += particle.vx * 0.016;
-          particle.y += particle.vy * 0.016;
-          particle.vx *= 0.98;
-          particle.vy *= 0.98;
-          particle.life -= 0.02;
-        }
-      });
       ctx.restore();
-
-      // Remove dead particles
-      setParticles(prev => prev.filter(p => p.life > 0));
-
-      ctx.restore();
-
-      // Draw HUD
-      drawHUD(ctx, canvas);
 
       animationFrameId = requestAnimationFrame(render);
-    };
-
-    const drawHUD = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-      // Leaderboard with neon theme
-      const leaderboardHeight = Math.min(leaderboard.length * 32 + 90, 400);
-      
-      // Background with glow
-      ctx.fillStyle = 'rgba(10, 14, 39, 0.85)'; // cyber-dark
-      ctx.fillRect(10, 10, 220, leaderboardHeight);
-      
-      // Border (no glow)
-      ctx.strokeStyle = '#39FF14'; // neon-green
-      ctx.lineWidth = 2;
-      ctx.strokeRect(10, 10, 220, leaderboardHeight);
-      
-      // Title
-      ctx.fillStyle = '#39FF14';
-      ctx.font = 'bold 18px Arial';
-      ctx.textAlign = 'left';
-      ctx.fillText('LEADERBOARD', 20, 38);
-
-      // Leaderboard entries
-      leaderboard.slice(0, 10).forEach((entry, i) => {
-        const y = 68 + i * 32;
-        const isMe = entry.id === myPlayerId;
-        
-        // Rank number
-        ctx.fillStyle = isMe ? '#FFD700' : '#00F0FF'; // neon-blue
-        ctx.font = 'bold 14px Arial';
-        ctx.fillText(`${i + 1}.`, 20, y);
-        
-        // Player name
-        ctx.fillStyle = isMe ? '#FFD700' : '#fff';
-        ctx.font = isMe ? 'bold 14px Arial' : '14px Arial';
-        ctx.fillText(entry.name, 45, y);
-        
-        // Mass
-        ctx.fillStyle = '#39FF14'; // neon-green
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'right';
-        ctx.fillText(Math.floor(entry.mass).toString(), 210, y);
-        ctx.textAlign = 'left';
-      });
-
-      // Spectator count with purple
-      if (spectatorCount > 0) {
-        const spectatorY = 68 + Math.min(leaderboard.length, 10) * 32 + 15;
-        ctx.fillStyle = '#BC13FE'; // neon-purple
-        ctx.font = '12px Arial';
-        ctx.fillText('👁️ Spectators', 20, spectatorY);
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'right';
-        ctx.fillText(spectatorCount.toString(), 210, spectatorY);
-        ctx.textAlign = 'left';
-      }
-
-      // Current mass display (neon theme)
-      const myMass = blobs
-        .filter(b => b.playerId === myPlayerId)
-        .reduce((sum, b) => sum + b.mass, 0);
-
-      if (myMass > 0) {
-        const massBoxWidth = 200;
-        const massBoxX = canvas.width - massBoxWidth - 10;
-        
-        // Background
-        ctx.fillStyle = 'rgba(10, 14, 39, 0.85)'; // cyber-dark
-        ctx.fillRect(massBoxX, 10, massBoxWidth, 70);
-        
-        // Border (subtle glow)
-        ctx.strokeStyle = '#00F0FF';
-        ctx.lineWidth = 2;
-        ctx.shadowColor = '#00F0FF';
-        ctx.shadowBlur = 5;
-        ctx.strokeRect(massBoxX, 10, massBoxWidth, 70);
-        ctx.shadowBlur = 0;
-        
-        // Label
-        ctx.fillStyle = '#00F0FF';
-        ctx.font = '12px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('YOUR MASS', canvas.width - 110, 32);
-        
-        // Mass value (minimal glow)
-        ctx.fillStyle = '#39FF14';
-        ctx.font = 'bold 28px Arial';
-        ctx.shadowColor = '#39FF14';
-        ctx.shadowBlur = 5;
-        ctx.fillText(Math.floor(myMass).toString(), canvas.width - 110, 62);
-        ctx.shadowBlur = 0;
-        ctx.textAlign = 'left';
-      }
     };
 
     render();
@@ -611,7 +770,7 @@ export default function GamePage() {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [blobs, pellets, leaderboard, camera, myPlayerId]);
+  }, [blobs, pellets, camera, killAnimations, mergeAnimations, shrinkAnimations, leaderboard, myPlayerId, isSpectating, spectatingPlayerId]);
 
   if (gameEnd) {
     const myStats = gameEnd.playerStats[myPlayerId];
@@ -619,11 +778,11 @@ export default function GamePage() {
     const isWinner = gameEnd.winnerId === myPlayerId;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-8">
-        <div className="max-w-2xl w-full bg-gray-800 border border-gray-700 rounded-2xl p-8">
+      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-8">
+        <div className="max-w-2xl w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-8">
           <h2 className="text-4xl font-black text-center mb-6">
             {isWinner ? (
-              <span className="bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-transparent">
+              <span className="gradient-text text-glow">
                 🏆 Victory! 🏆
               </span>
             ) : (
@@ -632,7 +791,7 @@ export default function GamePage() {
           </h2>
 
           <div className="text-center mb-8">
-            <div className="text-6xl font-black text-green-400 mb-2">
+            <div className="text-6xl font-black text-neon-green mb-2">
               #{myRanking}
             </div>
             <div className="text-gray-400">Final Placement</div>
@@ -640,33 +799,33 @@ export default function GamePage() {
 
           {/* Stats */}
           <div className="grid grid-cols-2 gap-4 mb-8">
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-cyber-darker rounded-lg p-4 border border-neon-green/30">
               <div className="text-sm text-gray-400">Food Eaten</div>
-              <div className="text-2xl font-bold text-green-400">{myStats?.pelletsEaten || 0}</div>
+              <div className="text-2xl font-bold text-neon-green">{myStats?.pelletsEaten || 0}</div>
             </div>
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-cyber-darker rounded-lg p-4 border border-neon-pink/30">
               <div className="text-sm text-gray-400">Cells Eaten</div>
-              <div className="text-2xl font-bold text-red-400">{myStats?.cellsEaten || 0}</div>
+              <div className="text-2xl font-bold text-neon-pink">{myStats?.cellsEaten || 0}</div>
             </div>
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-cyber-darker rounded-lg p-4 border border-neon-blue/30">
               <div className="text-sm text-gray-400">Highest Mass</div>
-              <div className="text-2xl font-bold text-blue-400">{Math.floor(myStats?.maxMass || 0)}</div>
+              <div className="text-2xl font-bold text-neon-blue">{Math.floor(myStats?.maxMass || 0)}</div>
             </div>
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-cyber-darker rounded-lg p-4 border border-neon-purple/30">
               <div className="text-sm text-gray-400">Time Survived</div>
-              <div className="text-2xl font-bold text-purple-400">
+              <div className="text-2xl font-bold text-neon-purple">
                 {Math.floor(myStats?.timeSurvived || 0)}s
               </div>
             </div>
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-cyber-darker rounded-lg p-4 border border-neon-green/30">
               <div className="text-sm text-gray-400">Leader Time</div>
-              <div className="text-2xl font-bold text-yellow-400">
+              <div className="text-2xl font-bold text-neon-green">
                 {Math.floor(myStats?.leaderTime || 0)}s
               </div>
             </div>
-            <div className="bg-gray-900 rounded-lg p-4">
+            <div className="bg-cyber-darker rounded-lg p-4 border border-neon-pink/30">
               <div className="text-sm text-gray-400">Best Rank</div>
-              <div className="text-2xl font-bold text-pink-400">
+              <div className="text-2xl font-bold text-neon-pink">
                 #{myStats?.bestRank === 999 ? '-' : myStats?.bestRank}
               </div>
             </div>
@@ -674,13 +833,13 @@ export default function GamePage() {
 
           {/* Final Rankings */}
           <div className="mb-8">
-            <h3 className="text-xl font-bold mb-4">Final Rankings</h3>
+            <h3 className="text-xl font-bold mb-4 text-neon-green">Final Rankings</h3>
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {gameEnd.finalRankings.map((player, index) => (
                 <div
                   key={player.id}
                   className={`flex justify-between items-center p-3 rounded ${
-                    player.id === myPlayerId ? 'bg-green-900/30 border border-green-500' : 'bg-gray-900'
+                    player.id === myPlayerId ? 'bg-neon-green/20 border border-neon-green/50' : 'bg-cyber-darker border border-neon-green/10'
                   }`}
                 >
                   <span className="font-bold">#{index + 1} {player.name}</span>
@@ -693,47 +852,47 @@ export default function GamePage() {
           </div>
 
           <button
-            onClick={() => router.push('/')}
-            className="w-full py-4 bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 rounded-lg font-bold text-white transition-all"
+            onClick={() => {
+              console.log('Return to lobby clicked (game end)');
+              if (socketRef.current) {
+                socketRef.current.disconnect();
+              }
+              localStorage.clear();
+              window.location.href = '/';
+            }}
+            className="w-full py-4 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green hover:to-neon-blue rounded-lg font-bold text-black transition-all hover:box-glow hover:scale-105"
           >
             Return to Lobby
           </button>
+          <p className="text-xs text-gray-500 text-center mt-3">
+            Auto-redirecting in a few seconds...
+          </p>
         </div>
       </div>
     );
   }
 
-  // Handle leave lobby
-  const leaveLobby = () => {
-    if (socketRef.current) {
-      socketRef.current.emit('leaveLobby', { playerId: myPlayerId });
-      socketRef.current.disconnect();
-    }
-    localStorage.removeItem('currentGameId');
-    router.push('/');
-  };
-
   // Show lobby waiting screen if game hasn't started
   if (!gameStarted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-8">
-        <div className="max-w-md w-full bg-gray-800 border border-gray-700 rounded-2xl p-8 text-center">
+      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-8">
+        <div className="max-w-md w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-8 text-center">
           <div className="mb-6">
             <div className="text-6xl mb-4">⏳</div>
             <h2 className="text-3xl font-bold text-white mb-2">Waiting for Game</h2>
             <p className="text-gray-400">Get ready to play!</p>
           </div>
 
-          <div className="bg-gray-900 rounded-lg p-6 mb-6">
-            <div className="text-4xl font-black text-green-400 mb-2">
+          <div className="bg-cyber-darker rounded-lg p-6 mb-6 border border-neon-green/30">
+            <div className="text-4xl font-black text-neon-green mb-2">
               {lobbyStatus.players}/{lobbyStatus.max}
             </div>
             <div className="text-sm text-gray-400">Players in Lobby</div>
           </div>
 
           {lobbyStatus.countdown !== null && lobbyStatus.countdown > 0 && (
-            <div className="bg-green-500/20 border border-green-500/50 rounded-lg p-4 mb-6">
-              <div className="text-2xl font-bold text-green-400 mb-1">
+            <div className="bg-neon-green/20 border border-neon-green/50 rounded-lg p-4 mb-6">
+              <div className="text-2xl font-bold text-neon-green mb-1">
                 Starting in {lobbyStatus.countdown}s
               </div>
               <div className="text-sm text-gray-400">Get ready!</div>
@@ -741,12 +900,9 @@ export default function GamePage() {
           )}
 
           {lobbyStatus.players < 10 && (
-            <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-4 mb-6">
-              <div className="text-sm text-yellow-400">
+            <div className="bg-neon-blue/20 border border-neon-blue/50 rounded-lg p-4 mb-6">
+              <div className="text-sm text-neon-blue">
                 Waiting for {10 - lobbyStatus.players} more player(s)...
-              </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Or the game will start automatically
               </div>
             </div>
           )}
@@ -755,180 +911,367 @@ export default function GamePage() {
             <p>Controls:</p>
             <p className="mt-1">Move: Mouse • Split: SPACE • Eject: W</p>
           </div>
-
-          <button
-            onClick={leaveLobby}
-            className="mt-6 w-full py-3 bg-red-500/20 border border-red-500/50 hover:bg-red-500/30 rounded-lg text-red-400 font-bold transition-all"
-          >
-            Leave Lobby
-          </button>
         </div>
       </div>
     );
   }
 
-  // Spectator controls
-  const switchSpectatorTarget = () => {
-    if (leaderboard.length === 0) return;
-    
-    const currentIndex = leaderboard.findIndex(p => p.id === followingPlayerId);
-    const nextIndex = (currentIndex + 1) % leaderboard.length;
-    
-    const nextPlayer = leaderboard[nextIndex];
-    if (nextPlayer) {
-      console.log('Switching spectator to:', nextPlayer.name);
-      setFollowingPlayerId(nextPlayer.id);
-    }
-  };
+  const myMass = blobs
+    .filter(b => b.playerId === myPlayerId)
+    .reduce((sum, b) => sum + b.mass, 0);
 
   return (
-    <div className="relative w-screen h-screen">
+    <div className="relative w-screen h-screen bg-gray-900">
       <canvas ref={canvasRef} className="absolute inset-0" />
       
-      {/* Spectator UI - Top center, compact */}
-      {(isSpectator || isEliminated) && (
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50">
-          <div className="bg-purple-600/90 backdrop-blur-md rounded-lg px-4 py-2 shadow-lg border border-purple-400/50 flex items-center gap-4">
+      {/* Spectator UI - Top Center */}
+      {isSpectating && (() => {
+        const spectatedPlayer = leaderboard.find(p => p.id === spectatingPlayerId);
+        
+        const switchPlayer = (direction: 'left' | 'right') => {
+          const alivePlayers = leaderboard.filter(p => p.mass > 0);
+          if (alivePlayers.length === 0) return;
+          
+          const currentIndex = alivePlayers.findIndex(p => p.id === spectatingPlayerId);
+          let newIndex;
+          if (direction === 'right') {
+            newIndex = (currentIndex + 1) % alivePlayers.length;
+          } else {
+            newIndex = (currentIndex - 1 + alivePlayers.length) % alivePlayers.length;
+          }
+          const newPlayer = alivePlayers[newIndex];
+          console.log(`🔄 MANUAL SWITCH via button to ${newPlayer.name} (${newPlayer.id})`);
+          console.log(`   Previous: ${spectatingPlayerId}, New: ${newPlayer.id}`);
+          setSpectatingPlayerId(newPlayer.id);
+        };
+        
+        // Show UI even if player not found yet (loading state)
+        return (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex flex-col gap-3">
+            {/* Spectator Info Card */}
             <div className="flex items-center gap-2">
-              <span className="text-white font-bold text-sm">
-                {isEliminated ? '💀 Eliminated' : '👁️'}
-              </span>
-              {followingPlayerId && (
-                <span className="text-purple-100 text-sm">
-                  Following: <span className="font-bold text-white">{leaderboard.find(p => p.id === followingPlayerId)?.name || '...'}</span>
-                </span>
-              )}
+              {/* Previous Player Button */}
+              <button
+                onClick={() => switchPlayer('left')}
+                className="w-10 h-10 bg-gray-700/90 hover:bg-gray-600 backdrop-blur-md rounded-lg border border-gray-600 shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center"
+                aria-label="Previous player"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              
+              {/* Spectator Info */}
+              <div className="bg-gray-800/90 backdrop-blur-md rounded-lg px-6 py-3 border border-gray-700 shadow-xl">
+                <div className="text-center">
+                  <div className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-1">Spectating</div>
+                  {spectatedPlayer ? (
+                    <>
+                      <div className="text-lg font-bold text-white">{spectatedPlayer.name}</div>
+                      <div className="text-sm text-gray-400">{Math.floor(spectatedPlayer.mass)} mass</div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-gray-400">Loading...</div>
+                  )}
+                  <div className="text-xs text-gray-500 mt-2 hidden md:block">← → to switch players</div>
+                </div>
+              </div>
+              
+              {/* Next Player Button */}
+              <button
+                onClick={() => switchPlayer('right')}
+                className="w-10 h-10 bg-gray-700/90 hover:bg-gray-600 backdrop-blur-md rounded-lg border border-gray-600 shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center"
+                aria-label="Next player"
+              >
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
             </div>
             
-            <div className="flex gap-2">
-              {leaderboard.length > 1 && (
-                <button
-                  onClick={switchSpectatorTarget}
-                  className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded text-white text-xs font-bold transition-all"
+            {/* Return to Lobby Button */}
+          <button
+            onClick={() => {
+              console.log('Return to lobby clicked (spectator)');
+              if (socketRef.current && gameIdRef.current) {
+                socketRef.current.emit('leaveSpectate', { gameId: gameIdRef.current });
+              }
+              if (socketRef.current) {
+                socketRef.current.disconnect();
+              }
+              localStorage.clear();
+              window.location.href = '/';
+            }}
+              className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold px-6 py-3 rounded-lg shadow-lg border border-red-400/50 transition-all hover:scale-105 active:scale-95"
+            >
+              Return to Lobby
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* Leaderboard - Top Left */}
+      {leaderboardVisible && (
+        <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden w-64">
+          <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-2 flex justify-between items-center">
+            <h3 className="text-white font-bold text-sm uppercase tracking-wide">Leaderboard</h3>
+            <button
+              onClick={() => setLeaderboardVisible(false)}
+              className="text-white/70 hover:text-white transition-colors"
+              aria-label="Hide leaderboard"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="p-3 space-y-1 max-h-80 overflow-y-auto">
+            {leaderboard.slice(0, 10).map((entry, index) => {
+              const isMe = entry.id === myPlayerId;
+              const isSpectated = entry.id === spectatingPlayerId;
+              return (
+                <div
+                  key={entry.id}
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-all ${
+                    isMe 
+                      ? 'bg-yellow-500/20 border border-yellow-500/50' 
+                      : isSpectated
+                      ? 'bg-blue-500/20 border border-blue-500/50'
+                      : 'bg-gray-700/30 hover:bg-gray-700/50'
+                  }`}
                 >
-                  ⏭️
-                </button>
-              )}
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-bold ${
+                      index === 0 ? 'text-yellow-400' : 
+                      index === 1 ? 'text-gray-300' : 
+                      index === 2 ? 'text-orange-400' : 
+                      'text-gray-400'
+                    }`}>
+                      #{index + 1}
+                    </span>
+                    <span className={`text-sm truncate max-w-[120px] ${
+                      isMe ? 'text-yellow-400 font-bold' : 
+                      isSpectated ? 'text-blue-400 font-bold' : 
+                      'text-white'
+                    }`}>
+                      {entry.name}
+                    </span>
+                  </div>
+                  <span className="text-sm font-semibold text-blue-400">
+                    {Math.floor(entry.mass)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {spectatorCount > 0 && (
+            <div className="px-4 py-2 bg-gray-900/50 border-t border-gray-700">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-400">Spectators</span>
+                <span className="text-blue-400 font-semibold">👁️ {spectatorCount}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Show Leaderboard Button */}
+      {!leaderboardVisible && (
+        <button
+          onClick={() => setLeaderboardVisible(true)}
+          className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-4 py-2 border border-gray-700 shadow-xl hover:bg-gray-700 transition-colors"
+          aria-label="Show leaderboard"
+        >
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      )}
+
+      {/* Mass Counter - Top Right */}
+      {!isSpectating && myMass > 0 && (
+        <div className="absolute top-4 right-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-6 py-4 min-w-[180px]">
+          <div className="text-center">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Your Mass</div>
+            <div className="text-3xl font-black text-white">{Math.floor(myMass)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Boundary Warning */}
+      {boundaryWarning && !isSpectating && (() => {
+        const elapsed = Date.now() - boundaryWarning.startTime;
+        const remaining = Math.max(0, 3 - Math.floor(elapsed / 1000));
+        
+        return (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+            <div className="bg-red-600/90 backdrop-blur-md rounded-xl border-4 border-red-400 shadow-2xl px-12 py-8 animate-pulse">
+              <div className="text-center">
+                <div className="text-6xl font-black text-white mb-4">{remaining}</div>
+                <div className="text-2xl font-bold text-white mb-2">⚠️ BOUNDARY WARNING ⚠️</div>
+                <div className="text-lg text-white">Move away from edge or die!</div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Minimap - Bottom Left */}
+      <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden">
+        <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-3 py-1.5 border-b border-gray-600">
+          <h4 className="text-white font-semibold text-xs uppercase tracking-wide">Map</h4>
+        </div>
+        <div className="relative w-48 h-48 bg-gray-900 p-2">
+          {blobs.map(blob => {
+            const x = (blob.x / 5000) * 192;
+            const y = (blob.y / 5000) * 192;
+            const size = Math.max(3, Math.min(10, Math.sqrt(blob.mass) / 3));
+            const isMe = blob.playerId === myPlayerId;
+            const isSpectated = blob.playerId === spectatingPlayerId;
+            
+            return (
+              <div
+                key={blob.id}
+                className="absolute rounded-full"
+                style={{
+                  left: `${x}px`,
+                  top: `${y}px`,
+                  width: `${size}px`,
+                  height: `${size}px`,
+                  backgroundColor: isMe ? '#FFD700' : (isSpectated ? '#4ECDC4' : blob.color),
+                  transform: 'translate(-50%, -50%)',
+                  boxShadow: isMe ? '0 0 8px #FFD700' : isSpectated ? '0 0 8px #4ECDC4' : 'none',
+                }}
+              />
+            );
+          })}
+          
+          {/* Camera viewport indicator */}
+          <div
+            className="absolute border-2 border-white/30"
+            style={{
+              left: `${((camera.x - 400/camera.zoom) / 5000) * 192}px`,
+              top: `${((camera.y - 300/camera.zoom) / 5000) * 192}px`,
+              width: `${(800/camera.zoom / 5000) * 192}px`,
+              height: `${(600/camera.zoom / 5000) * 192}px`,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Controls Overlay - Mobile Only */}
+      {!isSpectating && (
+        <div className="absolute bottom-4 right-4 flex gap-3 md:hidden">
+          <button
+            onClick={() => {
+              if (!socketRef.current || !canvasRef.current) return;
+              
+              const canvas = canvasRef.current;
+              const cam = cameraRef.current;
+              const screenPos = mouseScreenPosRef.current;
+              
+              const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
+              const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
+              
+              socketRef.current.emit('playerSplit', { 
+                playerId: playerIdRef.current, 
+                gameId: gameIdRef.current,
+                targetX: worldX,
+                targetY: worldY
+              });
+            }}
+            className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 rounded-full font-bold text-white shadow-lg border-2 border-green-400/50 active:scale-95 transition-transform"
+          >
+            <div className="text-xs">SPLIT</div>
+          </button>
+          <button
+            onClick={() => {
+              if (!socketRef.current || !canvasRef.current) return;
+              
+              const canvas = canvasRef.current;
+              const cam = cameraRef.current;
+              const screenPos = mouseScreenPosRef.current;
+              
+              const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
+              const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
+              
+              socketRef.current.emit('playerEject', { 
+                playerId: playerIdRef.current, 
+                gameId: gameIdRef.current,
+                targetX: worldX,
+                targetY: worldY
+              });
+            }}
+            className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 rounded-full font-bold text-white shadow-lg border-2 border-blue-400/50 active:scale-95 transition-transform"
+          >
+            <div className="text-xs">EJECT</div>
+          </button>
+        </div>
+      )}
+
+      {/* Keyboard Controls Info - Desktop only */}
+      {!isSpectating && (
+        <div className="absolute bottom-4 right-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-4 py-3 border border-gray-700 shadow-xl hidden md:block">
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-gray-700 text-white rounded font-mono text-xs border border-gray-600">SPACE</kbd>
+              <span className="text-gray-300">Split</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-gray-700 text-white rounded font-mono text-xs border border-gray-600">W</kbd>
+              <span className="text-gray-300">Eject Mass</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-4 right-4 z-50 animate-slideIn">
+          <div className={`bg-gradient-to-r ${
+            toastMessage.type === 'error' ? 'from-red-500 to-rose-600' :
+            toastMessage.type === 'success' ? 'from-green-500 to-emerald-600' :
+            toastMessage.type === 'warning' ? 'from-yellow-500 to-orange-500' :
+            'from-blue-500 to-cyan-500'
+          } text-white px-6 py-4 rounded-lg shadow-2xl border border-white/20 backdrop-blur-md max-w-md`}>
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0">
+                {toastMessage.type === 'error' && (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+                {toastMessage.type === 'success' && (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+                {toastMessage.type === 'warning' && (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                )}
+                {toastMessage.type === 'info' && (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">{toastMessage.message}</p>
+              </div>
               <button
-                onClick={leaveLobby}
-                className="px-3 py-1 bg-gray-900/60 hover:bg-gray-800 rounded text-white text-xs font-bold transition-all"
+                onClick={() => setToastMessage(null)}
+                className="flex-shrink-0 text-white/80 hover:text-white transition-colors"
               >
-                🏠
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
           </div>
         </div>
       )}
-      
-      {/* Controls Overlay - Mobile Only */}
-      <div className="absolute bottom-8 right-8 flex gap-4 md:hidden">
-        <button
-          onClick={() => {
-            if (!socketRef.current || !canvasRef.current) return;
-            
-            const canvas = canvasRef.current;
-            const cam = cameraRef.current;
-            const screenPos = mouseScreenPosRef.current;
-            
-            const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
-            const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
-            
-            socketRef.current.emit('playerSplit', { 
-              playerId: playerIdRef.current, 
-              gameId: gameIdRef.current,
-              targetX: worldX,
-              targetY: worldY
-            });
-          }}
-          className="w-16 h-16 bg-green-500 hover:bg-green-600 rounded-full font-bold text-white shadow-lg"
-        >
-          SPLIT
-        </button>
-        <button
-          onClick={() => {
-            if (!socketRef.current || !canvasRef.current) return;
-            
-            const canvas = canvasRef.current;
-            const cam = cameraRef.current;
-            const screenPos = mouseScreenPosRef.current;
-            
-            const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
-            const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
-            
-            socketRef.current.emit('playerEject', { 
-              playerId: playerIdRef.current, 
-              gameId: gameIdRef.current,
-              targetX: worldX,
-              targetY: worldY
-            });
-          }}
-          className="w-16 h-16 bg-blue-500 hover:bg-blue-600 rounded-full font-bold text-white shadow-lg"
-        >
-          EJECT
-        </button>
-      </div>
-
-      {/* Keyboard Controls Info - Neon Theme */}
-      <div className="absolute top-24 right-4 bg-cyber-dark/90 backdrop-blur-md rounded-lg p-3 text-sm hidden md:block shadow-lg shadow-neon-blue/20 border-2 border-neon-blue/40">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <kbd className="bg-neon-green/20 px-3 py-1 rounded font-mono font-bold text-neon-green border border-neon-green/40">SPACE</kbd>
-            <span className="text-gray-300">Split</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <kbd className="bg-neon-blue/20 px-3 py-1 rounded font-mono font-bold text-neon-blue border border-neon-blue/40">W</kbd>
-            <span className="text-gray-300">Eject</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Minimap - Development Tool */}
-      <div className="absolute bottom-4 left-4 bg-cyber-dark/90 backdrop-blur-md rounded-lg p-3 border-2 border-neon-purple/40 shadow-lg shadow-neon-purple/20">
-        <div className="text-xs text-neon-purple font-bold mb-2">MINIMAP</div>
-        <div className="relative w-48 h-48 bg-cyber-darker border-2 border-neon-purple/30">
-          {/* Map boundaries */}
-          <div className="absolute inset-0">
-            {/* Players */}
-            {blobs.map(blob => {
-              const x = (blob.x / 5000) * 192; // Scale to minimap size (192px = w-48)
-              const y = (blob.y / 5000) * 192;
-              const size = Math.max(2, Math.min(8, Math.sqrt(blob.mass) / 3));
-              const isMe = blob.playerId === myPlayerId;
-              
-              return (
-                <div
-                  key={blob.id}
-                  className="absolute rounded-full"
-                  style={{
-                    left: `${x}px`,
-                    top: `${y}px`,
-                    width: `${size}px`,
-                    height: `${size}px`,
-                    backgroundColor: isMe ? '#FFD700' : blob.color,
-                    transform: 'translate(-50%, -50%)',
-                    border: isMe ? '2px solid #FFF' : 'none',
-                  }}
-                />
-              );
-            })}
-            
-            {/* Camera viewport indicator */}
-            <div
-              className="absolute border-2 border-white/30"
-              style={{
-                left: `${((camera.x - 400/camera.zoom) / 5000) * 192}px`,
-                top: `${((camera.y - 300/camera.zoom) / 5000) * 192}px`,
-                width: `${(800/camera.zoom / 5000) * 192}px`,
-                height: `${(600/camera.zoom / 5000) * 192}px`,
-              }}
-            />
-          </div>
-        </div>
-        <div className="text-xs text-gray-500 mt-2">
-          Yellow = You • White box = Viewport
-        </div>
-      </div>
     </div>
   );
 }
-

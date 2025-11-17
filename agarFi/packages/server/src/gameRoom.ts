@@ -16,7 +16,7 @@ export class GameRoom {
   gameStartTime: number;
   maxDuration: number;
   playerTargets: Map<string, Vector2>;
-  spectators: Set<string>; // Track spectator socket IDs
+  currentMapBounds: { minX: number; maxX: number; minY: number; maxY: number };
   
   constructor(id: string, tier: string, io: Server) {
     this.id = id;
@@ -29,11 +29,17 @@ export class GameRoom {
     this.gameStartTime = Date.now();
     this.maxDuration = config.game.maxGameDuration;
     this.playerTargets = new Map();
-    this.spectators = new Set();
+    this.currentMapBounds = { 
+      minX: 0, 
+      maxX: config.game.mapWidth, 
+      minY: 0, 
+      maxY: config.game.mapHeight 
+    };
     
     this.gameState = {
       players: this.players,
       pellets: this.pellets,
+      spectators: new Set(),
       startTime: this.gameStartTime,
       lastTickTime: Date.now(),
     };
@@ -42,38 +48,22 @@ export class GameRoom {
   }
 
   /**
-   * Add spectator
-   */
-  addSpectator(socketId: string): void {
-    this.spectators.add(socketId);
-    console.log(`Spectator added to ${this.id}. Total: ${this.spectators.size}`);
-  }
-
-  /**
-   * Remove spectator
-   */
-  removeSpectator(socketId: string): void {
-    this.spectators.delete(socketId);
-    console.log(`Spectator removed from ${this.id}. Total: ${this.spectators.size}`);
-  }
-
-  /**
-   * Get spectator count
-   */
-  getSpectatorCount(): number {
-    return this.spectators.size;
-  }
-
-  /**
    * Initialize pellets across the map
    */
   private initializePellets(): void {
+    const pelletColors = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
+      '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+      '#F8B739', '#52B788', '#E63946', '#A8DADC'
+    ];
+
     for (let i = 0; i < config.game.pelletCount; i++) {
       const pellet: Pellet = {
         id: `pellet_${i}`,
         x: Math.random() * config.game.mapWidth,
         y: Math.random() * config.game.mapHeight,
         mass: 1,
+        color: pelletColors[Math.floor(Math.random() * pelletColors.length)],
       };
       this.pellets.set(pellet.id, pellet);
     }
@@ -97,7 +87,6 @@ export class GameRoom {
       splitTime: 0,
       canMerge: true,
       splitVelocity: { x: 0, y: 0 },
-      isMerging: false,
     };
 
     const player: Player = {
@@ -156,10 +145,19 @@ export class GameRoom {
     const deltaTime = (now - this.gameState.lastTickTime) / 1000;
     this.gameState.lastTickTime = now;
 
+    // Update shrinking safe zone
+    if (config.game.shrinkingEnabled) {
+      this.updateSafeZone();
+      this.cleanPelletsOutsideBounds();
+    }
+
     // Update all players
     for (const player of this.players.values()) {
       this.updatePlayer(player, deltaTime);
     }
+
+    // Update ejected pellets with velocity
+    this.updateEjectedPellets(deltaTime);
 
     // Handle blob merging
     this.handleMerging();
@@ -167,17 +165,121 @@ export class GameRoom {
     // Handle collisions
     this.handleCollisions();
 
+    // Damage players outside safe zone
+    if (config.game.shrinkingEnabled) {
+      this.handleSafeZoneDamage();
+    }
+
     // Update stats
     this.updateStats(deltaTime);
 
     // Check win condition
     this.checkWinCondition();
 
-    // Broadcast state EVERY tick (60Hz) for smooth gameplay
-    this.broadcastFullState();
+    // Broadcast state (full state every 500ms, deltas otherwise)
+    if (now % 500 < 20) {
+      this.broadcastFullState();
+    } else {
+      this.broadcastDeltaState();
+    }
 
     // Respawn pellets
     this.respawnPellets();
+  }
+
+  /**
+   * Update shrinking map boundaries based on game time
+   */
+  private updateSafeZone(): void {
+    const elapsed = Date.now() - this.gameStartTime;
+    const progress = elapsed / this.maxDuration; // 0 to 1
+
+    // Start shrinking immediately (for testing - 0% start)
+    const shrinkProgress = progress; // 0 to 1 throughout entire game
+    
+    // Shrink map from full size to 30% of original (centered)
+    const shrinkAmount = shrinkProgress * 0.7; // 0 to 0.7 (70% shrink)
+    const centerX = config.game.mapWidth / 2;
+    const centerY = config.game.mapHeight / 2;
+    const halfWidth = (config.game.mapWidth / 2) * (1 - shrinkAmount);
+    const halfHeight = (config.game.mapHeight / 2) * (1 - shrinkAmount);
+    
+    this.currentMapBounds = {
+      minX: centerX - halfWidth,
+      maxX: centerX + halfWidth,
+      minY: centerY - halfHeight,
+      maxY: centerY + halfHeight,
+    };
+    
+    // Log only every 10 seconds
+    if (Math.floor(elapsed / 1000) % 10 === 0 && elapsed % 1000 < 100) {
+      console.log(`🔴 Map: ${Math.floor(this.currentMapBounds.maxX - this.currentMapBounds.minX)}x${Math.floor(this.currentMapBounds.maxY - this.currentMapBounds.minY)} (${(progress * 100).toFixed(1)}% elapsed)`);
+    }
+  }
+
+  /**
+   * Handle players touching boundaries (3 second kill timer)
+   */
+  private handleSafeZoneDamage(): void {
+    const now = Date.now();
+    const BOUNDARY_MARGIN = 10; // How close is "touching"
+    const KILL_TIME = 3000; // 3 seconds
+    
+    for (const player of this.players.values()) {
+      let isTouchingBoundary = false;
+      
+      for (const blob of player.blobs) {
+        // Check if any blob is touching the boundary walls
+        const touchingLeft = blob.x - BOUNDARY_MARGIN <= this.currentMapBounds.minX;
+        const touchingRight = blob.x + BOUNDARY_MARGIN >= this.currentMapBounds.maxX;
+        const touchingTop = blob.y - BOUNDARY_MARGIN <= this.currentMapBounds.minY;
+        const touchingBottom = blob.y + BOUNDARY_MARGIN >= this.currentMapBounds.maxY;
+        
+        if (touchingLeft || touchingRight || touchingTop || touchingBottom) {
+          isTouchingBoundary = true;
+          break;
+        }
+      }
+      
+      if (isTouchingBoundary) {
+        // Start or continue boundary timer
+        if (!player.boundaryTouchTime) {
+          player.boundaryTouchTime = now;
+          console.log(`⚠️ ${player.name} touching boundary - 3s countdown started`);
+          
+          // Send warning to player
+          const socket = Array.from(this.io.sockets.sockets.values()).find(s => s.id === player.socketId);
+          if (socket) {
+            socket.emit('boundaryWarning', { startTime: now });
+          }
+        }
+        
+        const timeOnBoundary = now - player.boundaryTouchTime;
+        
+        // Kill after 3 seconds
+        if (timeOnBoundary >= KILL_TIME) {
+          console.log(`💀 ${player.name} eliminated by boundary (3s timeout)`);
+          player.blobs = [];
+          this.eliminatePlayer(player.id);
+          
+          const socket = Array.from(this.io.sockets.sockets.values()).find(s => s.id === player.socketId);
+          if (socket) {
+            socket.emit('boundaryKilled');
+          }
+        }
+      } else {
+        // Moved away from boundary - reset timer
+        if (player.boundaryTouchTime) {
+          console.log(`✅ ${player.name} moved away from boundary`);
+          player.boundaryTouchTime = undefined;
+          
+          const socket = Array.from(this.io.sockets.sockets.values()).find(s => s.id === player.socketId);
+          if (socket) {
+            socket.emit('boundarySafe');
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -190,32 +292,27 @@ export class GameRoom {
     const target = this.playerTargets.get(player.id);
     
     for (const blob of player.blobs) {
-      // Apply movement (15% slower if merging)
-      const moveSpeedMultiplier = blob.isMerging ? 0.85 : 1.0;
-      
-      // Always apply normal movement toward mouse
-      if (target) {
-        const adjustedDeltaTime = deltaTime * moveSpeedMultiplier;
-        Physics.moveToward(blob, target.x, target.y, adjustedDeltaTime);
-      }
-
-      // Additionally check if blob has split launch velocity
+      // Check if blob has split launch velocity
       const launchSpeed = Math.sqrt(blob.splitVelocity.x ** 2 + blob.splitVelocity.y ** 2);
       
-      if (launchSpeed > 5) {
-        // Add split velocity on top of normal movement
-        const adjustedDeltaTime = deltaTime * moveSpeedMultiplier;
-        blob.x += blob.splitVelocity.x * adjustedDeltaTime;
-        blob.y += blob.splitVelocity.y * adjustedDeltaTime;
+      if (launchSpeed > 10) {
+        // Blob is still in split launch mode - apply launch velocity
+        blob.x += blob.splitVelocity.x * deltaTime;
+        blob.y += blob.splitVelocity.y * deltaTime;
         
-        // Decay split velocity smoothly
-        const decay = 0.94; // 6% decay per tick = smoother slowdown
+        // Decay split velocity over time (friction effect)
+        const decay = 0.95; // 5% decay per tick
         blob.splitVelocity.x *= decay;
         blob.splitVelocity.y *= decay;
       } else {
-        // Split launch complete, clear split velocity
+        // Launch complete, clear split velocity
         blob.splitVelocity.x = 0;
         blob.splitVelocity.y = 0;
+      }
+      
+      // Always apply normal movement (unless launching)
+      if (launchSpeed < 100 && target) {
+        Physics.moveToward(blob, target.x, target.y, deltaTime);
       }
 
       // Clamp to map boundaries
@@ -242,57 +339,54 @@ export class GameRoom {
   }
 
   /**
-   * Handle merging of same-player blobs with 0.5s animation
+   * Handle merging of same-player blobs
    */
   private handleMerging(): void {
     const now = Date.now();
     const MERGE_COOLDOWN = 30000; // 30 seconds
-    const MERGE_ANIMATION_TIME = 500; // 0.5 seconds
 
     for (const player of this.players.values()) {
-      // Update merge eligibility
+      // Update merge eligibility for all blobs
       for (const blob of player.blobs) {
-        if (now - blob.splitTime > MERGE_COOLDOWN) {
+        const timeSinceSplit = now - blob.splitTime;
+        if (timeSinceSplit > MERGE_COOLDOWN) {
           blob.canMerge = true;
-        }
-
-        // Check if merge animation complete
-        if (blob.isMerging && blob.mergeStartTime) {
-          if (now - blob.mergeStartTime >= MERGE_ANIMATION_TIME) {
-            // Animation complete, actually merge
-            const targetBlob = player.blobs.find(b => b.id === blob.mergeTargetId);
-            if (targetBlob && !targetBlob.isMerging) {
-              targetBlob.mass += blob.mass;
-              player.blobs = player.blobs.filter(b => b.id !== blob.id);
-              console.log(`Merge animation complete for player ${player.name}`);
-            }
-          }
         }
       }
 
-      // Start merge animations when blobs are 50% overlapped
+      // Check all blob pairs for merging
       for (let i = 0; i < player.blobs.length; i++) {
         for (let j = i + 1; j < player.blobs.length; j++) {
           const blob1 = player.blobs[i];
           const blob2 = player.blobs[j];
 
-          // Skip if already merging
-          if (blob1.isMerging || blob2.isMerging) continue;
-
+          // Both must be eligible to merge (30s cooldown passed)
           if (blob1.canMerge && blob2.canMerge) {
             const r1 = Physics.calculateRadius(blob1.mass);
             const r2 = Physics.calculateRadius(blob2.mass);
-            const dist = Physics.distance(blob1.x, blob1.y, blob2.x, blob2.y);
-
-            // Check for 50% overlap: distance < 50% of combined radii
-            const minOverlapDist = (r1 + r2) * 0.5;
             
-            if (dist < minOverlapDist) {
-              // Start merge animation - blob2 merges into blob1
-              blob2.isMerging = true;
-              blob2.mergeTargetId = blob1.id;
-              blob2.mergeStartTime = now;
-              console.log(`Starting merge animation for player ${player.name} (${Math.floor((1 - dist/(r1+r2)) * 100)}% overlap)`);
+            // Calculate distance between centers
+            const dist = Physics.distance(blob1.x, blob1.y, blob2.x, blob2.y);
+            
+            // Require 50% overlap: distance < 50% of combined radii
+            const overlapThreshold = (r1 + r2) * 0.5;
+            
+            if (dist < overlapThreshold) {
+              // Merge blob2 into blob1
+              const oldMass = blob1.mass;
+              blob1.mass += blob2.mass;
+              
+              // Send merge animation event
+              this.io.to(this.id).emit('blobMerged', {
+                remainingBlobId: blob1.id,
+                mergedBlobId: blob2.id,
+              });
+              
+              player.blobs.splice(j, 1);
+              j--; // Adjust index after removal
+              
+              const playerType = player.isBot ? 'Bot' : 'Player';
+              console.log(`✓ ${playerType} ${player.name} merged blobs (${Math.floor(oldMass)} + ${Math.floor(blob2.mass)} = ${Math.floor(blob1.mass)}) - 50% overlap, ${Math.floor(now - blob1.splitTime)/1000}s since split`);
             }
           }
         }
@@ -347,11 +441,6 @@ export class GameRoom {
    * Handle collision between same-player blobs (push apart)
    */
   private handleSamePlayerCollision(blob1: Blob, blob2: Blob): void {
-    // Skip collision if either blob is merging (let them pass through during merge animation)
-    if (blob1.isMerging || blob2.isMerging) {
-      return;
-    }
-
     const r1 = Physics.calculateRadius(blob1.mass);
     const r2 = Physics.calculateRadius(blob2.mass);
 
@@ -380,20 +469,13 @@ export class GameRoom {
    * Handle blob eating another blob
    */
   private handleBlobCollision(predator: Blob, prey: Blob): void {
-    // Skip if either blob is merging (invulnerable during merge animation)
-    if (predator.isMerging || prey.isMerging) return;
     
     const predatorRadius = Physics.calculateRadius(predator.mass);
     const preyRadius = Physics.calculateRadius(prey.mass);
 
     if (Physics.checkCollision(predator.x, predator.y, predatorRadius, prey.x, prey.y, preyRadius)) {
       if (Physics.canEat(predator.mass, prey.mass)) {
-        // Mark prey as being eaten (for animation)
-        prey.isMerging = true;
-        prey.mergeTargetId = predator.id;
-        prey.mergeStartTime = Date.now();
-        
-        // Immediately transfer mass and remove (animation shown on client)
+        // Predator eats prey
         predator.mass += prey.mass;
         
         // Update stats
@@ -401,6 +483,14 @@ export class GameRoom {
         if (predatorPlayer) {
           predatorPlayer.stats.cellsEaten++;
         }
+
+        // Send kill animation event to all players in room
+        this.io.to(this.id).emit('blobKilled', {
+          killerBlobId: predator.id,
+          victimBlobId: prey.id,
+          victimX: prey.x,
+          victimY: prey.y,
+        });
 
         // Remove prey blob
         const preyPlayer = this.players.get(prey.playerId);
@@ -410,15 +500,14 @@ export class GameRoom {
           // If player has no more blobs, they're eliminated
           if (preyPlayer.blobs.length === 0) {
             this.eliminatePlayer(prey.playerId);
-            console.log(`Player ${preyPlayer.name} eliminated by ${predatorPlayer?.name || 'unknown'}`);
             
-            // Broadcast elimination event for particle effects
-            this.io.to(this.id).emit('playerEliminated', {
-              eliminatedId: prey.playerId,
-              eliminatedBy: predator.playerId,
-              x: prey.x,
-              y: prey.y,
-            });
+            // Send simple elimination event (no killer info)
+            const preySocket = Array.from(this.io.sockets.sockets.values()).find(s => s.id === preyPlayer.socketId);
+            if (preySocket) {
+              preySocket.emit('playerEliminated', {});
+            }
+            
+            console.log(`Player ${preyPlayer.name} eliminated`);
           }
         }
       }
@@ -446,6 +535,12 @@ export class GameRoom {
     if (player) {
       player.stats.timeSurvived = (Date.now() - player.joinTime) / 1000;
       console.log(`Player ${player.name} eliminated after ${player.stats.timeSurvived}s`);
+      
+      // Broadcast player count update to all lobbies
+      this.io.emit('playerCountUpdate', {
+        gameId: this.id,
+        tier: this.tier,
+      });
     }
   }
 
@@ -497,13 +592,6 @@ export class GameRoom {
     const alivePlayers = Array.from(this.players.values()).filter(p => p.blobs.length > 0);
     const elapsed = Date.now() - this.gameStartTime;
 
-    // No players left (everyone disconnected)
-    if (alivePlayers.length === 0) {
-      console.log('Win condition: No players left - everyone disconnected');
-      this.endGame(null);
-      return;
-    }
-
     // Last player standing
     if (alivePlayers.length === 1 && this.players.size > 1) {
       console.log(`Win condition: Last player standing (${alivePlayers[0].name})`);
@@ -511,13 +599,18 @@ export class GameRoom {
       return;
     }
 
-    // Time limit reached (5 minutes)
+    // Time limit reached (30 minutes)
     if (elapsed >= this.maxDuration) {
-      const leaderboard = this.getLeaderboard();
-      const winner = leaderboard.length > 0 ? leaderboard[0] : null;
-      console.log(`Win condition: Time limit reached (${elapsed / 1000}s). Winner by mass: ${winner?.name || 'None'} (${winner?.mass || 0} mass)`);
+      const winner = this.getLeaderboard()[0];
+      console.log(`Win condition: Time limit reached. Winner: ${winner?.name || 'None'}`);
       this.endGame(winner?.id || null);
       return;
+    }
+
+    // No players left
+    if (alivePlayers.length === 0) {
+      console.log('Win condition: No players left');
+      this.endGame(null);
     }
   }
 
@@ -575,75 +668,48 @@ export class GameRoom {
     
     console.log(`Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
     
-    // Notify lobby manager to cleanup (this will be called externally)
+    // Schedule cleanup after players have time to see results
+    setTimeout(() => {
+      this.stop();
+    }, 5000);
   }
 
   /**
-   * Get game ID
+   * Clean pellets outside bounds (including ejected mass)
    */
-  getGameId(): string {
-    return this.id;
+  private cleanPelletsOutsideBounds(): void {
+    for (const [id, pellet] of this.pellets.entries()) {
+      if (pellet.x < this.currentMapBounds.minX || pellet.x > this.currentMapBounds.maxX ||
+          pellet.y < this.currentMapBounds.minY || pellet.y > this.currentMapBounds.maxY) {
+        this.pellets.delete(id);
+      }
+    }
   }
 
   /**
-   * Check if game is still running
-   */
-  isRunning(): boolean {
-    return this.tickInterval !== null;
-  }
-
-  /**
-   * Force win condition check (called when player disconnects)
-   */
-  forceWinCheck(): void {
-    console.log('Force checking win condition');
-    this.checkWinCondition();
-  }
-
-  /**
-   * Respawn pellets to maintain count
+   * Respawn pellets to maintain count (only within current map bounds)
    */
   private respawnPellets(): void {
+    const pelletColors = [
+      '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
+      '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+      '#F8B739', '#52B788', '#E63946', '#A8DADC'
+    ];
+
     const target = config.game.pelletCount;
     const current = this.pellets.size;
 
+    // Spawn new pellets ONLY within current bounds
+    const MARGIN = 100;
     for (let i = 0; i < target - current; i++) {
       const pellet: Pellet = {
         id: `pellet_${Date.now()}_${i}`,
-        x: Math.random() * config.game.mapWidth,
-        y: Math.random() * config.game.mapHeight,
+        x: this.currentMapBounds.minX + MARGIN + Math.random() * (this.currentMapBounds.maxX - this.currentMapBounds.minX - MARGIN * 2),
+        y: this.currentMapBounds.minY + MARGIN + Math.random() * (this.currentMapBounds.maxY - this.currentMapBounds.minY - MARGIN * 2),
         mass: 1,
-        vx: 0,
-        vy: 0,
+        color: pelletColors[Math.floor(Math.random() * pelletColors.length)],
       };
       this.pellets.set(pellet.id, pellet);
-    }
-    
-    // Update ejected mass positions (apply velocity)
-    for (const pellet of this.pellets.values()) {
-      if (pellet.isEjected && pellet.vx !== undefined && pellet.vy !== undefined) {
-        const speed = Math.sqrt(pellet.vx ** 2 + pellet.vy ** 2);
-        
-        if (speed > 5) {
-          // Apply velocity to position
-          pellet.x += pellet.vx * (1 / config.server.tickRate);
-          pellet.y += pellet.vy * (1 / config.server.tickRate);
-          
-          // Decay velocity
-          const decay = 0.94;
-          pellet.vx *= decay;
-          pellet.vy *= decay;
-        } else {
-          // Velocity has decayed, become normal pellet
-          pellet.vx = 0;
-          pellet.vy = 0;
-          pellet.isEjected = false;
-        }
-        
-        // Clamp to map
-        pellet.x = Math.max(0, Math.min(config.game.mapWidth, pellet.x));
-        pellet.y = Math.max(0, Math.min(config.game.mapHeight, pellet.y));
-      }
     }
   }
 
@@ -657,20 +723,19 @@ export class GameRoom {
         blobs.push({
           id: blob.id,
           playerId: blob.playerId,
-          x: Math.round(blob.x * 10) / 10, // Round to 1 decimal for bandwidth
-          y: Math.round(blob.y * 10) / 10,
-          mass: Math.round(blob.mass * 10) / 10,
+          x: blob.x,
+          y: blob.y,
+          mass: blob.mass,
           velocity: blob.velocity,
           color: blob.color,
-          isMerging: blob.isMerging,
-          mergeTargetId: blob.mergeTargetId,
         });
       }
     }
 
     const pelletsArray = Array.from(this.pellets.values()).map(p => ({
-      x: Math.round(p.x),
-      y: Math.round(p.y),
+      x: p.x,
+      y: p.y,
+      color: p.color,
     }));
 
     const leaderboard = this.getLeaderboard().slice(0, 10);
@@ -679,8 +744,8 @@ export class GameRoom {
       blobs,
       pellets: pelletsArray,
       leaderboard,
-      spectatorCount: this.spectators.size,
-      serverTime: Date.now(), // For debugging sync
+      spectatorCount: this.gameState.spectators.size,
+      mapBounds: config.game.shrinkingEnabled ? this.currentMapBounds : null,
     });
   }
 
@@ -766,7 +831,6 @@ export class GameRoom {
           color: blob.color,
           splitTime: now,
           canMerge: false,
-          isMerging: false,
         };
         newBlobs.push(newBlob);
         
@@ -805,43 +869,93 @@ export class GameRoom {
           directionY = direction.y;
         }
 
-        // Add random angle spread (±30 degrees = ±0.524 radians)
-        const spreadAngle = (Math.random() - 0.5) * (Math.PI / 3); // ±30 degrees
-        const cos = Math.cos(spreadAngle);
-        const sin = Math.sin(spreadAngle);
-        
-        // Rotate direction vector by spread angle
-        const spreadDirX = directionX * cos - directionY * sin;
-        const spreadDirY = directionX * sin + directionY * cos;
-
-        // Eject 10 mass
+        // Eject 10 mass per blob
         blob.mass -= 10;
         
-        // Create ejected mass with velocity (like split)
-        const ejectSpeed = 400; // High velocity like split
-        const ejectedMass: any = {
+        // Create ejected mass pellet with shotgun spread
+        // Random angle within 30 degrees left/right of cursor
+        const spreadAngle = (Math.random() - 0.5) * (Math.PI / 3); // ±30 degrees in radians
+        
+        // Apply rotation to direction vector
+        const cos = Math.cos(spreadAngle);
+        const sin = Math.sin(spreadAngle);
+        const spreadDirX = directionX * cos - directionY * sin;
+        const spreadDirY = directionX * sin + directionY * cos;
+        
+        // Use same speed as split velocity (240)
+        const ejectSpeed = 240;
+        
+        // Use blob's color for ejected mass
+        const pellet: Pellet = {
           id: `ejected_${Date.now()}_${Math.random()}`,
           x: blob.x + spreadDirX * 30,
           y: blob.y + spreadDirY * 30,
           mass: 10,
-          vx: spreadDirX * ejectSpeed,
-          vy: spreadDirY * ejectSpeed,
-          isEjected: true,
+          color: blob.color, // Match the blob's color
+          velocity: { x: 0, y: 0 },
+          splitVelocity: {
+            x: spreadDirX * ejectSpeed,
+            y: spreadDirY * ejectSpeed,
+          },
+          createdAt: Date.now(),
         };
-        
-        this.pellets.set(ejectedMass.id, ejectedMass);
+        this.pellets.set(pellet.id, pellet);
       }
     }
   }
 
   /**
-   * Stop game
+   * Update ejected pellets with velocity (same logic as blob split velocity)
+   */
+  private updateEjectedPellets(deltaTime: number): void {
+    for (const [id, pellet] of this.pellets.entries()) {
+      // Only update pellets with splitVelocity (ejected ones)
+      if (pellet.splitVelocity) {
+        // Check if pellet has split launch velocity (same as blob logic)
+        const launchSpeed = Math.sqrt(pellet.splitVelocity.x ** 2 + pellet.splitVelocity.y ** 2);
+        
+        if (launchSpeed > 10) {
+          // Pellet is still in launch mode - apply launch velocity
+          pellet.x += pellet.splitVelocity.x * deltaTime;
+          pellet.y += pellet.splitVelocity.y * deltaTime;
+          
+          // Decay split velocity over time (friction effect) - same as blobs
+          const decay = 0.95; // 5% decay per tick
+          pellet.splitVelocity.x *= decay;
+          pellet.splitVelocity.y *= decay;
+        } else {
+          // Launch complete, clear split velocity
+          pellet.splitVelocity.x = 0;
+          pellet.splitVelocity.y = 0;
+        }
+        
+        // Clamp to map boundaries
+        const clamped = Physics.clampToMap(pellet.x, pellet.y, 2, config.game.mapWidth, config.game.mapHeight);
+        pellet.x = clamped.x;
+        pellet.y = clamped.y;
+        
+        // Ejected pellets stay on map permanently - never disappear
+      }
+    }
+  }
+
+  /**
+   * Stop game and clean up resources
    */
   stop(): void {
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
     }
+    
+    // Clear all game state
+    this.players.clear();
+    this.pellets.clear();
+    this.spatialHash.clear();
+    this.playerTargets.clear();
+    this.gameState.spectators.clear();
+    
+    console.log(`Game ${this.id} stopped and cleaned up`);
   }
 }
 

@@ -2,25 +2,56 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@layer base {
+  body {
+    @apply overflow-x-hidden text-white;
+    background-color: #050814;
+    font-family: 'Inter', sans-serif;
+  }
 }
 
-body {
-  font-family: 'Inter', sans-serif;
+@layer utilities {
+  .text-glow {
+    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor;
+  }
+  
+  .text-glow-strong {
+    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 40px currentColor, 0 0 80px currentColor;
+  }
+  
+  .box-glow {
+    box-shadow: 0 0 20px currentColor, 0 0 40px currentColor;
+  }
+  
+  .box-glow-strong {
+    box-shadow: 0 0 30px currentColor, 0 0 60px currentColor, 0 0 90px currentColor;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-neon-green via-neon-blue to-neon-purple;
+    letter-spacing: 0.02em;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
   background: #050814;
-  color: white;
-  overflow-x: hidden;
 }
 
-canvas {
-  display: block;
-  cursor: crosshair;
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #39FF14, #00F0FF);
+  border-radius: 5px;
 }
 
-/* Particle canvas */
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #00F0FF, #BC13FE);
+}
+
+/* Particle effect canvas */
 #particles {
   position: fixed;
   top: 0;
@@ -31,7 +62,7 @@ canvas {
   z-index: 0;
 }
 
-/* Blob animations */
+/* Blob animation for background */
 .blob {
   position: absolute;
   border-radius: 50%;
@@ -65,5 +96,54 @@ canvas {
   bottom: 10%;
   left: 50%;
   animation-delay: 10s;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(0, 0);
+  }
+  33% {
+    transform: translate(30px, -30px);
+  }
+  66% {
+    transform: translate(-20px, 20px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out;
+}
+
+canvas {
+  display: block;
+  cursor: crosshair;
 }
 
