@@ -20,15 +20,15 @@ const io = new Server(httpServer, {
 const lobbyManager = new LobbyManager(io);
 
 // REST API Endpoints
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (req: any, res: any) => {
   res.json({ status: 'healthy', timestamp: Date.now() });
 });
 
-app.get('/api/lobbies', (req, res) => {
+app.get('/api/lobbies', (req: any, res: any) => {
   res.json(lobbyManager.getLobbiesStatus());
 });
 
-app.get('/api/game-modes', (req, res) => {
+app.get('/api/game-modes', (req: any, res: any) => {
   res.json(config.gameModes);
 });
 

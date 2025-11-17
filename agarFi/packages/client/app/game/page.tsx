@@ -330,14 +330,14 @@ export default function GamePage() {
 
       // Check if current spectated player is still alive
       if (isSpectating && spectatingPlayerId) {
-        const current = newLeaderboard.find(p => p.id === spectatingPlayerId);
+        const current = newLeaderboard.find((p: LeaderboardEntry) => p.id === spectatingPlayerId);
         const currentBlobs = newBlobs.filter((b: Blob) => b.playerId === spectatingPlayerId);
         
         console.log(`📊 Current spectate: ${spectatingPlayerId}, Found in leaderboard: ${!!current}, Has blobs: ${currentBlobs.length}`);
         
         // ONLY auto-switch if player is confirmed dead
         if (!current || current.mass === 0 || currentBlobs.length === 0) {
-          const alivePlayers = newLeaderboard.filter(p => p.mass > 0);
+          const alivePlayers = newLeaderboard.filter((p: LeaderboardEntry) => p.mass > 0);
           if (alivePlayers.length > 0) {
             console.log(`⚠️ ${spectatingPlayerId} is DEAD, switching to ${alivePlayers[0].name}`);
             setSpectatingPlayerId(alivePlayers[0].id);
