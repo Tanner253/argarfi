@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
 
 interface GameMode {
   tier: string;
@@ -20,19 +21,47 @@ interface LobbyStatus {
   status: string;
   countdown: number | null;
   spectatorCount?: number;
+  timeRemaining?: number | null;
+}
+
+interface GameEvent {
+  id: string;
+  type: 'elimination' | 'win' | 'game_start';
+  message: string;
+  timestamp: number;
+  tier?: string;
+}
+
+interface ChatMessage {
+  id: string;
+  username: string;
+  message: string;
+  timestamp: number;
 }
 
 export default function HomePage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
   const [playerName, setPlayerName] = useState('');
   const [showRoadmap, setShowRoadmap] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [connectedClients, setConnectedClients] = useState(0);
+  const [playersInGame, setPlayersInGame] = useState(0);
+  const [totalSpectators, setTotalSpectators] = useState(0);
 
   const CONTRACT_ADDRESS = '6WQxQRguwYVwrHpFkNJsLK2XRnWLuqaLuQ8VBGXupump';
+
+  const calculateWinnings = (buyIn: number, maxPlayers: number) => {
+    return Math.floor(buyIn * maxPlayers * 0.8);
+  };
 
   const copyToClipboard = async () => {
     try {
@@ -45,7 +74,6 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    // Particle animation
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -93,7 +121,6 @@ export default function HomePage() {
         ctx.fillStyle = p.color;
         ctx.fill();
 
-        // Draw connections
         particles.slice(i + 1).forEach((p2) => {
           const dx = p.x - p2.x;
           const dy = p.y - p2.y;
@@ -125,19 +152,16 @@ export default function HomePage() {
 
     const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3001';
 
-    // Fetch game modes
     fetch(`${serverUrl}/api/game-modes`)
       .then(res => res.json())
       .then(setGameModes)
       .catch(console.error);
 
-    // Initial fetch
     fetch(`${serverUrl}/api/lobbies`)
       .then(res => res.json())
       .then(setLobbies)
       .catch(console.error);
 
-    // Connect to Socket.io for real-time updates
     const socket = require('socket.io-client').io(serverUrl);
     
     socket.on('lobbyUpdate', (update: LobbyStatus) => {
@@ -153,9 +177,7 @@ export default function HomePage() {
       });
     });
 
-    // Update when player dies in active game
     socket.on('playerCountUpdate', ({ tier }: { tier: string }) => {
-      // Refetch lobby status for this tier
       fetch(`${serverUrl}/api/lobbies`)
         .then(res => res.json())
         .then(updatedLobbies => {
@@ -164,11 +186,83 @@ export default function HomePage() {
         .catch(console.error);
     });
 
+    socket.on('gameEvent', (event: { type: string; killer?: string; victim?: string; winner?: string; prize?: number; players?: number; tier?: string }) => {
+      const newEvent: GameEvent = {
+        id: Date.now().toString(),
+        type: event.type as 'elimination' | 'win' | 'game_start',
+        message: '',
+        timestamp: Date.now(),
+        tier: event.tier
+      };
+
+      if (event.type === 'elimination' && event.killer && event.victim) {
+        newEvent.message = `${event.victim} eliminated by ${event.killer}`;
+      } else if (event.type === 'win' && event.winner && event.prize && event.players) {
+        newEvent.message = `${event.winner} won $${event.prize.toLocaleString()} (${event.players} players)`;
+      } else if (event.type === 'game_start' && event.tier) {
+        newEvent.message = `$${event.tier} game starting now!`;
+      }
+
+      // Show only one event at a time
+      setCurrentEvent(newEvent);
+      
+      // Auto-dismiss after 5 seconds
+      setTimeout(() => {
+        setCurrentEvent(prev => prev?.id === newEvent.id ? null : prev);
+      }, 5000);
+    });
+
+    socket.on('chatMessage', (msg: { username: string; message: string }) => {
+      const newMsg: ChatMessage = {
+        id: Date.now().toString(),
+        username: msg.username,
+        message: msg.message,
+        timestamp: Date.now()
+      };
+      setChatMessages(prev => [...prev, newMsg].slice(-50));
+    });
+
+    // Listen for stats updates
+    socket.on('statsUpdate', (stats: { connectedClients: number; playersInGame: number; totalSpectators: number }) => {
+      setConnectedClients(stats.connectedClients);
+      setPlayersInGame(stats.playersInGame);
+      setTotalSpectators(stats.totalSpectators);
+    });
+
+    // Fetch initial stats
+    fetch(`${serverUrl}/api/stats`)
+      .then(res => res.json())
+      .then((stats: { connectedClients: number; playersInGame: number; totalSpectators: number }) => {
+        setConnectedClients(stats.connectedClients);
+        setPlayersInGame(stats.playersInGame);
+        setTotalSpectators(stats.totalSpectators);
+      })
+      .catch(console.error);
+
+    (window as any).gameSocket = socket;
+
     return () => {
       socket.disconnect();
       window.removeEventListener('resize', handleResize);
     };
   }, []);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
+
+  const sendChatMessage = () => {
+    if (!chatInput.trim() || !playerName.trim()) return;
+    
+    const socket = (window as any).gameSocket;
+    if (socket) {
+      socket.emit('chatMessage', {
+        username: playerName,
+        message: chatInput.trim()
+      });
+      setChatInput('');
+    }
+  };
 
   const joinLobby = (tier: string) => {
     if (!playerName.trim()) {
@@ -185,27 +279,23 @@ export default function HomePage() {
   };
 
   const spectateGame = (tier: string) => {
-    console.log('🎥 Spectate button clicked for tier:', tier);
-    console.log('Setting localStorage: spectateMode=true, selectedTier=' + tier);
     localStorage.setItem('spectateMode', 'true');
     localStorage.setItem('selectedTier', tier);
-    console.log('Navigating to /game...');
     router.push('/game');
   };
 
-  // Handle ESC key to close roadmap modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && showRoadmap) {
+      if (e.key === 'Escape') {
         setShowRoadmap(false);
+        setShowChat(false);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showRoadmap]);
+  }, []);
 
-  // Auto-dismiss toast after 3 seconds
   useEffect(() => {
     if (toastMessage) {
       const timer = setTimeout(() => setToastMessage(null), 3000);
@@ -217,231 +307,533 @@ export default function HomePage() {
     return lobbies.find(l => l.tier === tier);
   };
 
+  const getGameStatus = (lobby: LobbyStatus | undefined) => {
+    if (!lobby) return 'READY TO PLAY';
+    if (lobby.countdown !== null && lobby.countdown > 0) return 'STARTING SOON';
+    if (lobby.status === 'playing') return 'GAME IN PROGRESS';
+    if (lobby.playersLocked >= lobby.maxPlayers) return 'LOBBY FULL';
+    if (lobby.playersLocked > 0) return `${lobby.playersLocked}/${lobby.maxPlayers} PLAYERS`;
+    return 'READY TO PLAY';
+  };
+
   return (
-    <main className="relative min-h-screen">
+    <main className="relative min-h-screen overflow-hidden">
       <canvas ref={canvasRef} id="particles" className="fixed inset-0 z-0" />
       
-      {/* Background blobs */}
       <div className="blob blob-1" />
       <div className="blob blob-2" />
       <div className="blob blob-3" />
 
-      <div className="relative z-10 min-h-screen flex flex-col items-center justify-center p-8">
-      <div className="max-w-6xl w-full">
-        {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-6xl md:text-7xl font-black mb-4 gradient-text text-glow-strong tracking-tight">
-            AgarFi
-          </h1>
-            <p className="text-xl md:text-2xl text-neon-green text-glow mb-2">Skill-Based GameFi • Phase 1 Demo</p>
-            <p className="text-sm text-gray-400 mt-2">Free play - No payments required</p>
+      {/* Top Bar - Minimal */}
+      <motion.nav
+        className="fixed top-0 left-0 right-0 z-50 bg-cyber-dark/60 backdrop-blur-xl border-b border-neon-green/10"
+        initial={{ y: -100 }}
+        animate={{ y: 0 }}
+      >
+        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-black gradient-text">AgarFi</h1>
+            <div className="hidden md:flex items-center gap-3 text-xs">
+              <span className="flex items-center gap-1.5 text-gray-400">
+                <div className="w-2 h-2 bg-gray-400 rounded-full" />
+                <span className="font-bold text-white">{connectedClients}</span> online
+              </span>
+              <span className="text-gray-600">•</span>
+              <span className="flex items-center gap-1.5 text-gray-400">
+                <svg className="w-3 h-3 text-neon-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                </svg>
+                <span className="font-bold text-neon-blue">{playersInGame}</span> in game
+              </span>
+              <span className="text-gray-600">•</span>
+              <span className="flex items-center gap-1.5 text-gray-400">
+                <svg className="w-3 h-3 text-neon-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                <span className="font-bold text-neon-purple">{totalSpectators}</span> spectating
+              </span>
+              <span className="text-gray-600">•</span>
+              <span className="flex items-center gap-1.5 text-gray-400">
+                <svg className="w-3 h-3 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                <span className="font-bold text-neon-green">{connectedClients - playersInGame - totalSpectators}</span> browsing
+              </span>
+            </div>
           </div>
-
-          {/* Action Buttons - Top */}
-          <div className="mb-8 flex flex-col sm:flex-row gap-4 justify-center">
-            <a
+          
+          <div className="flex items-center gap-2">
+            <motion.button
+              onClick={() => setShowRoadmap(true)}
+              className="px-3 py-1.5 bg-neon-purple/10 border border-neon-purple/30 rounded-lg text-neon-purple text-xs font-bold hover:bg-neon-purple/20 transition-all flex items-center gap-1.5"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+              </svg>
+              Roadmap
+            </motion.button>
+            <motion.a
               href="https://agarfi.vercel.app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="group relative px-8 py-4 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-blue hover:to-neon-green rounded-lg font-bold text-black transition-all hover:scale-105 hover:box-glow shadow-xl"
+              className="px-3 py-1.5 bg-neon-green/10 border border-neon-green/30 rounded-lg text-neon-green text-xs font-bold hover:bg-neon-green/20 transition-all"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
             >
-              <span className="flex items-center gap-3 justify-center">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-lg">Why Should I Buy This?</span>
-                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </span>
-            </a>
-            
-            <button
-              onClick={() => setShowRoadmap(true)}
-              className="group relative px-8 py-4 bg-gradient-to-r from-neon-purple to-neon-pink hover:from-neon-pink hover:to-neon-purple rounded-lg font-bold text-white transition-all hover:scale-105 hover:box-glow shadow-xl"
-            >
-              <span className="flex items-center gap-3 justify-center">
-                <svg className="w-6 h-6 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-                </svg>
-                <span className="text-lg">View Roadmap</span>
-                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </span>
-            </button>
+              Whitepaper
+            </motion.a>
           </div>
+        </div>
+      </motion.nav>
 
-          {/* Contract Address Card */}
-          <div className="mb-8">
-            <div className="max-w-2xl mx-auto bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-xl p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400 mb-1">Contract Address</p>
-                  <p className="text-xs md:text-sm text-neon-green font-mono break-all">
-                    {CONTRACT_ADDRESS}
-                  </p>
-                </div>
-                <button
-                  onClick={copyToClipboard}
-                  className="flex-shrink-0 px-4 py-2 bg-neon-green/20 hover:bg-neon-green/30 border border-neon-green/50 text-neon-green rounded-lg transition-all hover:scale-105"
+      {/* Main Content */}
+      <div className="relative z-10 pt-16 px-4 pb-8">
+        <div className="max-w-[1400px] mx-auto">
+          
+          {/* Hero - Centered */}
+          <motion.div
+            className="text-center mb-8 mt-8"
+            initial={{ opacity: 0, y: -30 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <h2 className="text-6xl md:text-7xl font-black gradient-text text-glow-strong mb-4">
+              Choose Your Battle
+            </h2>
+            <p className="text-lg text-gray-400 mb-2">
+              Pick your stakes, dominate the arena, win big
+            </p>
+            <p className="text-xs text-white/60 mb-6">
+              Bots will not be in live games when in production
+            </p>
+            
+            {/* Player Name - Inline */}
+            <motion.div 
+              className="max-w-md mx-auto"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.2 }}
+            >
+              <input
+                type="text"
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                placeholder="Enter your name to play..."
+                className="w-full px-6 py-4 bg-cyber-dark/70 backdrop-blur-xl border-2 border-neon-green/30 rounded-xl focus:outline-none focus:border-neon-green focus:shadow-lg focus:shadow-neon-green/30 text-white text-center text-lg transition-all placeholder-gray-500"
+                maxLength={20}
+              />
+            </motion.div>
+          </motion.div>
+
+          {/* Game Modes - Hero Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {gameModes.map((mode, index) => {
+              const lobby = getLobbyStatus(mode.tier);
+              const isLocked = mode.locked;
+              const potentialWinnings = calculateWinnings(mode.buyIn, mode.maxPlayers);
+              const isWhale = mode.tier === 'whale';
+              const gameStatus = getGameStatus(lobby);
+
+              // Special rendering for Whale Mode
+              if (isWhale) {
+                return (
+                  <motion.div
+                    key={mode.tier}
+                    initial={{ opacity: 0, y: 30 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 + index * 0.05 }}
+                    className="sm:col-span-2 lg:col-span-3 xl:col-span-4 relative group"
+                  >
+                    {/* Epic Glow */}
+                    <div className="absolute -inset-1 rounded-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-500 blur-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 animate-pulse" />
+
+                    <div className="relative bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-xl border-2 border-yellow-400/70 rounded-2xl overflow-hidden">
+                      {/* Animated Background */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/5 via-transparent to-orange-500/5 animate-shimmer" />
+                      
+                      {/* Unlock Badge - Top Right */}
+                      <div className="absolute top-4 right-4">
+                        {isLocked ? (
+                          <div className="px-4 py-2 bg-purple-500/40 border-2 border-purple-400/60 rounded-xl backdrop-blur-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg animate-pulse">💎</span>
+                              <div className="text-sm font-bold text-purple-300">Unlocks at $1M Market Cap</div>
+                            </div>
+                          </div>
+                        ) : lobby?.status === 'playing' && lobby.timeRemaining !== null && lobby.timeRemaining !== undefined && (
+                          <div className="px-4 py-2 bg-neon-blue/40 border-2 border-neon-blue/60 rounded-xl backdrop-blur-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">⏱</span>
+                              <div className="text-sm font-bold text-neon-blue">
+                                {Math.floor(lobby.timeRemaining / 60000)}:{String(Math.floor((lobby.timeRemaining % 60000) / 1000)).padStart(2, '0')}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="relative p-8">
+                        {/* Title Section */}
+                        <div className="flex items-center gap-4 mb-6">
+                          <span className="text-6xl animate-float">🐋</span>
+                          <div>
+                            <h3 className="text-5xl font-black gradient-text text-glow-strong mb-2">
+                              WHALE MODE
+                            </h3>
+                            <div className="text-3xl font-bold text-white">
+                              Win ${potentialWinnings.toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Prize Grid */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl">
+                          <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-4 text-center backdrop-blur-sm">
+                            <div className="text-sm text-yellow-400 mb-2 font-bold">Entry Fee</div>
+                            <div className="text-3xl font-black text-white">$500</div>
+                          </div>
+                          <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-4 text-center backdrop-blur-sm">
+                            <div className="text-sm text-yellow-400 mb-2 font-bold">Max Players</div>
+                            <div className="text-3xl font-black text-white">50</div>
+                          </div>
+                          <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-4 text-center backdrop-blur-sm">
+                            <div className="text-sm text-yellow-400 mb-2 font-bold">Total Pool</div>
+                            <div className="text-3xl font-black text-white">$25K</div>
+                          </div>
+                          <div className="bg-gradient-to-br from-yellow-400/30 to-orange-500/30 border-2 border-yellow-400/70 rounded-xl p-4 text-center backdrop-blur-sm">
+                            <div className="text-sm text-yellow-400 mb-2 font-bold">🏆 Winner Takes</div>
+                            <div className="text-3xl font-black gradient-text text-glow">$20K</div>
+                          </div>
+                        </div>
+
+                        {/* CTA Button */}
+                        <div className="mt-6 text-center">
+                          <motion.button
+                            className="px-16 py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-xl font-black text-xl"
+                            disabled
+                          >
+                            🔒 Coming Soon
+                          </motion.button>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              // Regular game modes
+              return (
+                <motion.div
+                  key={mode.tier}
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 + index * 0.05 }}
+                  className="relative group"
                 >
-                  {copied ? (
-                    <span className="flex items-center gap-1 text-sm">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Copied
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-sm">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                      </svg>
-                      Copy
-                    </span>
-                  )}
-                </button>
-              </div>
-            </div>
-        </div>
+                  {/* Hover Glow */}
+                  <div className="absolute -inset-0.5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur bg-neon-green" />
 
-        {/* Player Name Input */}
-        <div className="mb-8 max-w-md mx-auto">
-            <label className="block text-sm font-medium mb-2 text-gray-300">Your Name</label>
-          <input
-            type="text"
-            value={playerName}
-            onChange={(e) => setPlayerName(e.target.value)}
-            placeholder="Enter your name"
-              className="w-full px-4 py-3 bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-lg focus:outline-none focus:border-neon-green focus:box-glow text-white transition-all"
-            maxLength={20}
-          />
-        </div>
-
-        {/* Game Modes Grid */}
-        <div className="grid md:grid-cols-3 gap-6">
-          {gameModes.map((mode) => {
-            const lobby = getLobbyStatus(mode.tier);
-            const isLocked = mode.locked;
-
-            return (
-              <div
-                key={mode.tier}
-                  className={`bg-cyber-dark/50 backdrop-blur-lg border ${isLocked ? 'border-neon-purple/30' : 'border-neon-green/30'} rounded-xl p-6 ${
-                    isLocked ? 'opacity-50' : 'hover:border-neon-green hover:box-glow transition-all'
-                }`}
-              >
-                <div className="mb-4">
-                  <h3 className="text-2xl font-bold text-white mb-1">
-                    {mode.tier === 'whale' ? '🐋 Whale Mode' : `$${mode.buyIn} Stakes`}
-                  </h3>
-                  <p className="text-sm text-gray-400">{mode.name}</p>
-                  {isLocked && (
-                      <p className="text-xs text-neon-purple mt-2">🔒 Unlocks at $1M Market Cap</p>
-                  )}
-                </div>
-
-                {!isLocked && lobby && (
-                  <div className="mb-4 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Players</span>
-                      <span className="text-neon-green font-bold">
-                        {lobby.realPlayerCount || 0}
-                      </span>
+                  <div className="relative bg-cyber-dark/80 backdrop-blur-xl border border-neon-green/30 hover:border-neon-green rounded-xl p-5 transition-all">
+                    {/* Header */}
+                    <div className="flex items-start justify-between mb-4">
+                      <div>
+                        <h3 className="text-2xl font-black mb-1 text-white">
+                          ${mode.buyIn} Entry
+                        </h3>
+                        <div className="text-xl font-bold text-neon-green">
+                          Win ${potentialWinnings.toLocaleString()}
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col items-end gap-1">
+                        {/* Status or Timer */}
+                        {lobby?.status === 'playing' && lobby.timeRemaining !== null && lobby.timeRemaining !== undefined ? (
+                          <div className="px-3 py-1.5 rounded-lg bg-neon-blue/20 border border-neon-blue/50 text-center">
+                            <div className="text-xs font-bold text-neon-blue mb-0.5">GAME IN PROGRESS</div>
+                            <div className="text-sm font-black text-white">
+                              ⏱ {Math.floor(lobby.timeRemaining / 60000)}:{String(Math.floor((lobby.timeRemaining % 60000) / 1000)).padStart(2, '0')}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`px-2 py-1 rounded text-xs font-bold ${
+                            lobby?.countdown
+                              ? 'bg-yellow-400/20 text-yellow-400'
+                              : 'bg-neon-green/20 text-neon-green'
+                          }`}>
+                            {gameStatus}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Bots</span>
-                      <span className="text-purple-400 font-bold">
-                        {lobby.botCount || 0}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">Total</span>
-                      <span className="text-white font-bold">
-                        {lobby.playersLocked}/{lobby.maxPlayers}
-                      </span>
-                    </div>
-                    {lobby.status === 'playing' && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-400">Spectators</span>
-                        <span className="text-neon-blue font-bold">
-                          {lobby.spectatorCount || 0}
-                        </span>
+
+                    {/* Stats Row */}
+                    {lobby && (
+                      <div className="grid grid-cols-4 gap-2 mb-4">
+                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
+                          <div className="text-sm font-bold text-neon-green">{lobby.realPlayerCount || 0}</div>
+                          <div className="text-xs text-gray-500">Players</div>
+                        </div>
+                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
+                          <div className="text-sm font-bold text-purple-400">{lobby.botCount || 0}</div>
+                          <div className="text-xs text-gray-500">Bots</div>
+                        </div>
+                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
+                          <div className="text-sm font-bold text-neon-blue">{lobby.spectatorCount || 0}</div>
+                          <div className="text-xs text-gray-500">Spectators</div>
+                        </div>
+                        <div className="bg-cyber-darker/50 rounded p-2 text-center">
+                          <div className="text-sm font-bold text-white">{lobby.playersLocked}/{lobby.maxPlayers}</div>
+                          <div className="text-xs text-gray-500">Total</div>
+                        </div>
                       </div>
                     )}
-                    {lobby.countdown !== null && lobby.countdown > 0 && (
-                      <div className="text-center py-2 bg-neon-green/20 rounded text-neon-green font-bold">
-                        Starting in {lobby.countdown}s
+
+                    {/* Progress Bar - Shows combined bots + players */}
+                    {lobby && (
+                      <div className="mb-4">
+                        <div className="h-1.5 bg-cyber-darker rounded-full overflow-hidden">
+                          <motion.div 
+                            className="h-full bg-gradient-to-r from-neon-green to-neon-blue"
+                            animate={{ width: `${((lobby.playersLocked || 0) / lobby.maxPlayers) * 100}%` }}
+                            transition={{ duration: 0.5 }}
+                          />
+                        </div>
                       </div>
                     )}
-                    {lobby.status === 'playing' && (
-                      <div className="text-center py-2 bg-neon-blue/20 rounded text-neon-blue font-bold">
-                        🎮 Game In Progress
-                      </div>
+
+                    {/* Action Button */}
+                    {lobby && lobby.status === 'playing' ? (
+                      <motion.button
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => spectateGame(mode.tier)}
+                        className="w-full py-3 rounded-xl font-bold bg-gradient-to-r from-neon-blue to-neon-purple text-white shadow-lg"
+                      >
+                        👁️ Spectate
+                      </motion.button>
+                    ) : (
+                      <motion.button
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => joinLobby(mode.tier)}
+                        className="w-full py-3 rounded-xl font-bold shadow-lg bg-gradient-to-r from-neon-green to-neon-blue text-black"
+                      >
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="line-through text-gray-600 text-xs">${mode.buyIn}</span>
+                          <span className="bg-red-500 text-white px-2 py-0.5 rounded text-xs font-black">FREE</span>
+                          <span>⚔️ Play Now</span>
+                        </div>
+                      </motion.button>
                     )}
                   </div>
-                )}
-
-                {lobby && lobby.status === 'playing' ? (
-                  <button
-                    onClick={() => spectateGame(mode.tier)}
-                    className="w-full py-3 rounded-lg font-bold transition-all bg-gradient-to-r from-neon-blue to-neon-purple hover:from-neon-blue hover:to-neon-purple text-white hover:box-glow hover:scale-105"
-                  >
-                    👁️ Spectate Game
-                  </button>
-                ) : (
-                <button
-                  onClick={() => joinLobby(mode.tier)}
-                  disabled={isLocked}
-                  className={`w-full py-3 rounded-lg font-bold transition-all ${
-                    isLocked
-                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                        : 'bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green hover:to-neon-blue text-black hover:box-glow hover:scale-105'
-                  }`}
-                >
-                    {isLocked ? 'Coming Soon' : lobby?.status === 'countdown' ? 'Join Starting Game' : 'Join Lobby'}
-                </button>
-                )}
-
-                <div className="mt-4 text-xs text-gray-500">
-                  <div>Max Players: {mode.maxPlayers}</div>
-                  <div>Phase 1: Free Play</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Info */}
-          <div className="mt-12 text-center text-gray-400 text-sm">
-          <p>Phase 1 Demo - Core gameplay mechanics only</p>
-            <p className="mt-2">Press <kbd className="px-2 py-1 bg-neon-green/20 border border-neon-green/50 rounded text-neon-green">SPACE</kbd> to split • Press <kbd className="px-2 py-1 bg-neon-blue/20 border border-neon-blue/50 rounded text-neon-blue">W</kbd> to eject mass</p>
+                </motion.div>
+              );
+            })}
           </div>
+
+          {/* Footer Info - Minimal */}
+          <motion.div
+            className="mt-8 text-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.8 }}
+          >
+            <button
+              onClick={copyToClipboard}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-cyber-dark/50 border border-gray-600/30 rounded-lg text-xs text-gray-400 hover:border-neon-blue/50 hover:text-neon-blue transition-all"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span className="font-mono">{copied ? 'Copied!' : CONTRACT_ADDRESS.slice(0, 8) + '...' + CONTRACT_ADDRESS.slice(-6)}</span>
+            </button>
+          </motion.div>
+
         </div>
       </div>
 
-      {/* Roadmap Modal */}
+      {/* Rolling Event Feed - Single Item with Slot Machine Animation */}
+      {currentEvent && (
+        <motion.div
+          key={currentEvent.id}
+          initial={{ y: -100, opacity: 0, scale: 0.8 }}
+          animate={{ y: 0, opacity: 1, scale: 1 }}
+          exit={{ y: -100, opacity: 0, scale: 0.8 }}
+          transition={{ 
+            type: 'spring', 
+            stiffness: 400, 
+            damping: 20,
+            opacity: { duration: 0.2 }
+          }}
+          className="fixed top-16 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-full px-4"
+        >
+          <div className={`relative overflow-hidden rounded-xl border-2 backdrop-blur-xl shadow-2xl ${
+            currentEvent.type === 'win'
+              ? 'bg-gradient-to-r from-yellow-400/30 to-orange-500/30 border-yellow-400/80'
+              : currentEvent.type === 'elimination'
+              ? 'bg-gradient-to-r from-red-500/30 to-rose-600/30 border-red-500/80'
+              : 'bg-gradient-to-r from-neon-blue/30 to-neon-purple/30 border-neon-blue/80'
+          }`}>
+            {/* Animated shimmer effect */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+            
+            <div className="relative p-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 flex-1">
+                <motion.div 
+                  className="text-3xl"
+                  animate={{ 
+                    rotate: [0, 10, -10, 10, 0],
+                    scale: [1, 1.2, 1]
+                  }}
+                  transition={{ duration: 0.5 }}
+                >
+                  {currentEvent.type === 'win' && '🏆'}
+                  {currentEvent.type === 'elimination' && '💀'}
+                  {currentEvent.type === 'game_start' && '🚀'}
+                </motion.div>
+                <div className={`flex-1 font-bold text-base ${
+                  currentEvent.type === 'win' ? 'text-yellow-400' :
+                  currentEvent.type === 'elimination' ? 'text-red-400' :
+                  'text-neon-blue'
+                }`}>
+                  {currentEvent.message}
+                </div>
+              </div>
+
+              {/* Spectate Button for Game Starts */}
+              {currentEvent.type === 'game_start' && currentEvent.tier && (
+                <motion.button
+                  onClick={() => spectateGame(currentEvent.tier!)}
+                  className="px-5 py-2.5 bg-neon-blue/40 hover:bg-neon-blue/60 border-2 border-neon-blue/80 rounded-lg text-white font-bold text-sm transition-all shadow-lg"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  👁️ Spectate Now
+                </motion.button>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Chat Bubble */}
+      <motion.button
+        onClick={() => setShowChat(true)}
+        className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-gradient-to-r from-neon-blue to-neon-purple rounded-full shadow-2xl flex items-center justify-center"
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.9 }}
+        animate={{ y: [0, -5, 0] }}
+        transition={{ duration: 2, repeat: Infinity }}
+      >
+        <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+        {chatMessages.length > 0 && (
+          <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">
+            {chatMessages.length > 9 ? '9+' : chatMessages.length}
+          </div>
+        )}
+      </motion.button>
+
+      {/* Chat Modal */}
+      {showChat && (
+        <div 
+          className="fixed inset-0 z-50 flex items-end justify-end p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowChat(false)}
+        >
+          <motion.div 
+            className="w-full max-w-md bg-cyber-dark/95 backdrop-blur-xl border-2 border-neon-blue/50 rounded-2xl shadow-2xl overflow-hidden"
+            initial={{ opacity: 0, y: 100 }}
+            animate={{ opacity: 1, y: 0 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-r from-neon-blue to-neon-purple p-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                Global Chat
+              </h3>
+              <button onClick={() => setShowChat(false)} className="p-1 hover:bg-white/20 rounded transition-colors">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="h-[350px] overflow-y-auto p-4 space-y-2 bg-cyber-darker/50">
+              {chatMessages.length === 0 ? (
+                <div className="text-center py-16 text-gray-500 text-sm">
+                  <svg className="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <p>Be the first to chat!</p>
+                </div>
+              ) : (
+                chatMessages.map((msg) => (
+                  <div key={msg.id} className="bg-cyber-dark/50 rounded-lg p-2 border border-neon-blue/20">
+                    <span className="text-neon-green font-bold text-xs">{msg.username}:</span>{' '}
+                    <span className="text-gray-300 text-xs">{msg.message}</span>
+                  </div>
+                ))
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="p-3 bg-cyber-dark border-t border-neon-blue/30">
+              {!playerName.trim() && (
+                <div className="mb-2 text-center text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 rounded p-2">
+                  Enter your name above to chat
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                  placeholder="Type message..."
+                  disabled={!playerName.trim()}
+                  className="flex-1 px-3 py-2 bg-cyber-darker/50 border border-neon-blue/30 rounded-lg focus:outline-none focus:border-neon-blue text-white text-sm placeholder-gray-600 disabled:opacity-50"
+                  maxLength={200}
+                />
+                <motion.button
+                  onClick={sendChatMessage}
+                  disabled={!playerName.trim() || !chatInput.trim()}
+                  className="px-4 py-2 bg-gradient-to-r from-neon-blue to-neon-purple text-white rounded-lg font-bold text-sm disabled:opacity-50"
+                  whileHover={{ scale: playerName.trim() && chatInput.trim() ? 1.05 : 1 }}
+                >
+                  Send
+                </motion.button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Roadmap Modal - Comprehensive */}
       {showRoadmap && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
           onClick={() => setShowRoadmap(false)}
         >
-          <div 
-            className="relative w-full max-w-6xl max-h-[90vh] bg-gradient-to-br from-cyber-darker to-cyber-dark rounded-2xl border-2 border-neon-purple/50 shadow-2xl overflow-hidden"
+          <motion.div 
+            className="relative w-full max-w-5xl max-h-[90vh] bg-gradient-to-br from-cyber-darker to-cyber-dark rounded-2xl border-2 border-neon-purple/50 shadow-2xl overflow-hidden"
+            initial={{ opacity: 0, scale: 0.9, y: 50 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 50 }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="sticky top-0 z-10 bg-gradient-to-r from-neon-purple via-neon-pink to-neon-blue p-6 border-b-2 border-neon-purple/50">
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-4xl font-black text-white mb-2">🚀 AgarFi Roadmap</h2>
+                  <h2 className="text-3xl font-black text-white mb-2">🚀 AgarFi Roadmap</h2>
                   <p className="text-sm text-white/80">From Concept to GameFi Domination in 7 Days</p>
                 </div>
-                <button
-                  onClick={() => setShowRoadmap(false)}
-                  className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                >
+                <button onClick={() => setShowRoadmap(false)} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
                   <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -451,204 +843,274 @@ export default function HomePage() {
 
             {/* Content */}
             <div className="overflow-y-auto max-h-[calc(90vh-120px)] p-6 space-y-6">
-              {/* Days 1-2: Core Game System */}
-              <div className="relative pl-8 border-l-4 border-neon-green">
+              
+              {/* Lightning Fast Banner */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gradient-to-r from-neon-green/20 via-neon-blue/20 to-neon-purple/20 border-2 border-neon-green/50 rounded-2xl p-6 text-center"
+              >
+                <h3 className="text-3xl font-bold mb-3 gradient-text">⚡ Lightning Fast Development</h3>
+                <p className="text-xl text-neon-green font-bold mb-2">Complete Platform in Just 1 Week</p>
+                <p className="text-sm text-gray-300">
+                  Leveraging cutting-edge protocols (x403, x402) and modern tooling, AgarFi goes from concept to production-ready in 7 days.
+                </p>
+              </motion.div>
+
+              {/* Phase 1: Days 1-2 */}
+              <motion.div
+                initial={{ opacity: 0, x: -30 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.1 }}
+                className="relative pl-8 border-l-4 border-neon-green"
+              >
                 <div className="absolute -left-3 top-0 w-6 h-6 bg-neon-green rounded-full animate-pulse" />
-                <div className="bg-cyber-dark/50 backdrop-blur-lg rounded-xl p-6 border border-neon-green/30 hover:border-neon-green hover:box-glow transition-all">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="px-3 py-1 bg-neon-green/20 text-neon-green rounded-full text-sm font-bold">Days 1-2</span>
-                    <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-bold">✓ COMPLETE</span>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-green/30 hover:border-neon-green transition-all">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
+                    <div>
+                      <h3 className="text-2xl font-bold text-neon-green mb-2">Days 1-2</h3>
+                      <p className="text-xl text-gray-300">Core Game System</p>
+                    </div>
+                    <div className="mt-3 md:mt-0 text-right">
+                      <p className="text-sm text-gray-400">48 Hours</p>
+                      <span className="inline-block px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-bold mt-1">
+                        ✓ COMPLETE
+                      </span>
+                    </div>
                   </div>
-                  <h3 className="text-2xl font-bold text-neon-green mb-3">Core Game System</h3>
-                  <div className="space-y-2 text-gray-300">
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-green mt-1">✓</span>
-                      <span>60fps Canvas rendering with vanilla JS physics</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-green mt-1">✓</span>
-                      <span>Socket.io real-time multiplayer (60Hz server tick)</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-green mt-1">✓</span>
-                      <span>Blob mechanics: eat, split, merge, eject pellets</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-green mt-1">✓</span>
-                      <span>Four standard game modes ($5, $25, $50, $100)</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-green mt-1">✓</span>
-                      <span>Dynamic lobby system with auto-scaling</span>
-                    </p>
-                  </div>
+                  <ul className="space-y-2 text-gray-300 text-sm">
+                    {[
+                      '60fps Canvas rendering with vanilla JS physics',
+                      'Socket.io real-time multiplayer (60Hz server tick)',
+                      'Blob mechanics: eat, split, merge, eject pellets',
+                      'Seven game modes ($1, $5, $10, $25, $50, $100, Whale)',
+                      'Whale Mode infrastructure (50 player lobbies)',
+                      'Dynamic lobby system with auto-scaling',
+                      'Mobile-optimized touch controls'
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-neon-green mt-0.5">✓</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              </div>
+              </motion.div>
 
-              {/* Days 3-4: x403 Authentication */}
-              <div className="relative pl-8 border-l-4 border-neon-blue">
+              {/* Phase 2: Days 3-4 */}
+              <motion.div
+                initial={{ opacity: 0, x: -30 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.2 }}
+                className="relative pl-8 border-l-4 border-neon-blue"
+              >
                 <div className="absolute -left-3 top-0 w-6 h-6 bg-neon-blue rounded-full animate-pulse" />
-                <div className="bg-cyber-dark/50 backdrop-blur-lg rounded-xl p-6 border border-neon-blue/30 hover:border-neon-blue hover:box-glow transition-all">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="px-3 py-1 bg-neon-blue/20 text-neon-blue rounded-full text-sm font-bold">Days 3-4</span>
-                    <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs font-bold">⚡ IN PROGRESS</span>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-blue/30 hover:border-neon-blue transition-all">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
+                    <div>
+                      <h3 className="text-2xl font-bold text-neon-blue mb-2">Days 3-4</h3>
+                      <p className="text-xl text-gray-300">x403 Authentication & Anti-Bot</p>
+                    </div>
+                    <div className="mt-3 md:mt-0 text-right">
+                      <p className="text-sm text-gray-400">48 Hours</p>
+                      <span className="inline-block px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs font-bold mt-1">
+                        ⚡ IN PROGRESS
+                      </span>
+                    </div>
                   </div>
-                  <h3 className="text-2xl font-bold text-neon-blue mb-3">🔥 x403 Authentication & Anti-Bot</h3>
+                  
+                  {/* x403 Explainer */}
                   <div className="bg-neon-blue/10 border border-neon-blue/30 rounded-lg p-4 mb-4">
-                    <p className="text-sm font-bold text-neon-blue mb-2">🚀 Revolutionary Technology:</p>
-                    <p className="text-sm text-gray-300">
-                      x403 uses ECDSA signature verification to prove wallet ownership WITHOUT passwords or email. 
-                      Bot-resistant, zero PII, one wallet = one concurrent game. This is Web3 authentication done RIGHT.
+                    <p className="text-sm font-bold text-neon-blue mb-2">🔥 Revolutionary x403 Protocol:</p>
+                    <p className="text-xs text-gray-300">
+                      ECDSA signature verification proves wallet ownership WITHOUT passwords or email. 
+                      Bot-resistant, zero PII, one wallet = one concurrent game. Web3 authentication done RIGHT.
                     </p>
                   </div>
-                  <div className="space-y-2 text-gray-300">
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-blue mt-1">→</span>
-                      <span>Wallet signature verification flow</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-blue mt-1">→</span>
-                      <span>User profiles with stats tracking</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-blue mt-1">→</span>
-                      <span>Real-time leaderboards</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-blue mt-1">→</span>
-                      <span>35-minute session caching</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
 
-              {/* Days 5-6: Payments & Token Economy */}
-              <div className="relative pl-8 border-l-4 border-neon-purple">
+                  <ul className="space-y-2 text-gray-300 text-sm">
+                    {[
+                      'x403 protocol integration (trending Web3 auth)',
+                      'Wallet signature verification flow',
+                      'User profiles with stats tracking',
+                      'Real-time leaderboards (top players)',
+                      'One game per wallet enforcement',
+                      '35-minute session caching',
+                      'Anti-farming pattern detection'
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-neon-blue mt-0.5">→</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </motion.div>
+
+              {/* Phase 3: Days 5-6 */}
+              <motion.div
+                initial={{ opacity: 0, x: -30 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+                className="relative pl-8 border-l-4 border-neon-purple"
+              >
                 <div className="absolute -left-3 top-0 w-6 h-6 bg-neon-purple rounded-full" />
-                <div className="bg-cyber-dark/50 backdrop-blur-lg rounded-xl p-6 border border-neon-purple/30 hover:border-neon-purple hover:box-glow transition-all">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="px-3 py-1 bg-neon-purple/20 text-neon-purple rounded-full text-sm font-bold">Days 5-6</span>
-                    <span className="px-3 py-1 bg-gray-500/20 text-gray-400 rounded-full text-xs font-bold">○ SCHEDULED</span>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-purple/30 hover:border-neon-purple transition-all">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
+                    <div>
+                      <h3 className="text-2xl font-bold text-neon-purple mb-2">Days 5-6</h3>
+                      <p className="text-xl text-gray-300">Payments & Token Economy</p>
+                    </div>
+                    <div className="mt-3 md:mt-0 text-right">
+                      <p className="text-sm text-gray-400">48 Hours</p>
+                      <span className="inline-block px-3 py-1 bg-gray-500/20 text-gray-400 rounded-full text-xs font-bold mt-1">
+                        ○ SCHEDULED
+                      </span>
+                    </div>
                   </div>
-                  <h3 className="text-2xl font-bold text-neon-purple mb-3">💰 Payments & Token Economy</h3>
-                  <div className="bg-gradient-to-r from-neon-purple/10 to-neon-pink/10 border border-neon-purple/30 rounded-lg p-4 mb-4">
-                    <p className="text-sm font-bold text-neon-purple mb-2">🔥 x402 Payment Protocol:</p>
-                    <p className="text-sm text-gray-300">
+
+                  {/* x402 Explainer */}
+                  <div className="bg-gradient-to-r from-neon-purple/10 to-neon-pink/10 border border-neon-purple/30 rounded-lg p-4 mb-3">
+                    <p className="text-sm font-bold text-neon-purple mb-2">💰 x402 Payment Protocol:</p>
+                    <p className="text-xs text-gray-300">
                       Programmatic crypto payments over HTTP using status code 402. No accounts, no sessions, no KYC. 
-                      Just pure frictionless USDC payments via SPL tokens on Solana.
+                      Pure frictionless USDC payments via SPL tokens on Solana.
                     </p>
                   </div>
+
+                  {/* Winning Potential */}
                   <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
-                    <p className="text-xl font-black text-yellow-400 mb-2">💎 Win 20x Your Bet!</p>
-                    <p className="text-sm text-gray-300">
-                      Bet $5, win $100. Bet $100, win $2,000. Winner takes 80% of the pot. 
-                      Pure skill-based gameplay with deterministic physics. No RNG, no luck—just YOU vs THE WORLD.
+                    <p className="text-lg font-black text-yellow-400 mb-2">💎 Win 20x Your Bet!</p>
+                    <p className="text-xs text-gray-300">
+                      Bet $5, win $100. Bet $100, win $2,000. Winner takes 80% of pot. 
+                      Pure skill-based gameplay with deterministic physics. No RNG, no luck.
                     </p>
                   </div>
-                  <div className="space-y-2 text-gray-300">
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-purple mt-1">→</span>
-                      <span>Solana USDC payment integration</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-purple mt-1">→</span>
-                      <span>Server-managed prize pools with instant payouts</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-purple mt-1">→</span>
-                      <span>Automatic AGAR buyback mechanism (Raydium SDK)</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-purple mt-1">→</span>
-                      <span>30-day staking smart contract</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
 
-              {/* Day 7: Launch */}
-              <div className="relative pl-8 border-l-4 border-neon-pink">
+                  <ul className="space-y-2 text-gray-300 text-sm">
+                    {[
+                      'Solana USDC payment integration (SPL tokens)',
+                      'x402-inspired payment UX (viral prompts)',
+                      'Server-managed prize pools with instant payouts',
+                      'Automatic AGAR buyback mechanism (Raydium SDK)',
+                      '30-day staking smart contract (Anchor)',
+                      'Public transaction dashboards',
+                      'Real-time pot tracking and transparency'
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-neon-purple mt-0.5">→</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </motion.div>
+
+              {/* Phase 4: Day 7 */}
+              <motion.div
+                initial={{ opacity: 0, x: -30 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.4 }}
+                className="relative pl-8 border-l-4 border-neon-pink"
+              >
                 <div className="absolute -left-3 top-0 w-6 h-6 bg-neon-pink rounded-full" />
-                <div className="bg-cyber-dark/50 backdrop-blur-lg rounded-xl p-6 border border-neon-pink/30 hover:border-neon-pink hover:box-glow transition-all">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="px-3 py-1 bg-neon-pink/20 text-neon-pink rounded-full text-sm font-bold">Day 7</span>
-                    <span className="px-3 py-1 bg-gray-500/20 text-gray-400 rounded-full text-xs font-bold">○ SCHEDULED</span>
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-pink/30 hover:border-neon-pink transition-all">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
+                    <div>
+                      <h3 className="text-2xl font-bold text-neon-pink mb-2">Day 7</h3>
+                      <p className="text-xl text-gray-300">Testing, Polish & Launch</p>
+                    </div>
+                    <div className="mt-3 md:mt-0 text-right">
+                      <p className="text-sm text-gray-400">24 Hours</p>
+                      <span className="inline-block px-3 py-1 bg-gray-500/20 text-gray-400 rounded-full text-xs font-bold mt-1">
+                        ○ SCHEDULED
+                      </span>
+                    </div>
                   </div>
-                  <h3 className="text-2xl font-bold text-neon-pink mb-3">🎉 Testing, Polish & Launch</h3>
-                  <div className="space-y-2 text-gray-300">
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-pink mt-1">→</span>
-                      <span>End-to-end testing with real mainnet USDC/AGAR</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-pink mt-1">→</span>
-                      <span>Security audits and penetration testing</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-pink mt-1">→</span>
-                      <span>Performance optimization (60fps guarantee)</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-pink mt-1">→</span>
-                      <span>Production deployment (Vercel + Render)</span>
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <span className="text-neon-pink mt-1">→</span>
-                      <span className="font-bold text-neon-pink">🚀 PUBLIC BETA LAUNCH</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
 
-              {/* Whale Mode */}
-              <div className="relative pl-8 border-l-4 border-yellow-400">
+                  <ul className="space-y-2 text-gray-300 text-sm">
+                    {[
+                      'End-to-end testing with real mainnet USDC/AGAR',
+                      'Security audits and penetration testing',
+                      'Performance optimization (60fps guarantee)',
+                      'Mobile device testing (iOS/Android browsers)',
+                      'Marketing materials and social media setup',
+                      'Production deployment (Vercel + Render)',
+                      '🎉 PUBLIC BETA LAUNCH'
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-neon-pink mt-0.5">→</span>
+                        <span className={i === 6 ? 'font-bold text-neon-pink' : ''}>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </motion.div>
+
+              {/* Whale Mode Unlock */}
+              <motion.div
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+                className="relative pl-8 border-l-4 border-yellow-400"
+              >
                 <div className="absolute -left-3 top-0 w-6 h-6 bg-yellow-400 rounded-full animate-float" />
-                <div className="bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-lg rounded-xl p-6 border-2 border-yellow-400/50 hover:border-yellow-400 hover:box-glow-strong transition-all">
-                  <div className="flex items-center gap-3 mb-3">
+                <div className="bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-lg rounded-xl p-6 border-2 border-yellow-400/50">
+                  <div className="flex items-center gap-3 mb-4">
                     <span className="text-4xl animate-float">🐋</span>
-                    <span className="px-3 py-1 bg-yellow-400/20 text-yellow-400 rounded-full text-sm font-bold">@ $1M Market Cap</span>
+                    <div>
+                      <h3 className="text-3xl font-black gradient-text mb-1">WHALE MODE UNLOCKS</h3>
+                      <p className="text-sm text-yellow-400 font-bold">@ $1M Market Cap • Live Service Global Event</p>
+                    </div>
                   </div>
-                  <h3 className="text-3xl font-black text-yellow-400 mb-3">WHALE MODE UNLOCKS</h3>
-                  <div className="bg-black/30 border border-yellow-400/30 rounded-lg p-4 mb-4">
-                    <p className="text-2xl font-black text-white mb-2">$500 Buy-In • 50 Players • $20,000 Winner</p>
+                  
+                  <div className="bg-black/40 border border-yellow-400/30 rounded-lg p-4 mb-4">
+                    <p className="text-xl font-black text-white mb-2">$500 Buy-In • 50 Players • $20,000 Winner</p>
                     <p className="text-sm text-gray-300">
                       The ultimate high-stakes arena. Live spectator mode. Hall of fame. Auto-recorded replays. 
                       This is Web3 gaming's Super Bowl. 🏆
                     </p>
                   </div>
+
+                  <div className="grid md:grid-cols-2 gap-3 text-sm">
+                    {[
+                      { icon: '📺', title: 'Live Spectator Mode', desc: 'Watch elite players compete in real-time' },
+                      { icon: '🏆', title: 'Hall of Fame', desc: 'Permanent leaderboard of Whale victors' },
+                      { icon: '🎥', title: 'Auto-Recorded Replays', desc: 'Every match saved for community' },
+                      { icon: '🌐', title: 'Global Event', desc: 'Community notifications when lobby opens' }
+                    ].map((feature, i) => (
+                      <div key={i} className="flex items-start gap-2 bg-black/30 rounded-lg p-3 border border-yellow-400/20">
+                        <span className="text-xl">{feature.icon}</span>
+                        <div>
+                          <p className="font-bold text-yellow-400 text-xs">{feature.title}</p>
+                          <p className="text-gray-400 text-xs">{feature.desc}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              </motion.div>
+
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
 
-      {/* Toast Notification */}
+      {/* Error Toast */}
       {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 animate-slideIn">
-          <div className="bg-gradient-to-r from-red-500 to-rose-600 text-white px-6 py-4 rounded-lg shadow-2xl border border-white/20 backdrop-blur-md max-w-md">
-            <div className="flex items-start gap-3">
-              <div className="flex-shrink-0">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">{toastMessage}</p>
-              </div>
-              <button
-                onClick={() => setToastMessage(null)}
-                className="flex-shrink-0 text-white/80 hover:text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50">
+          <motion.div 
+            className="bg-red-500 text-white px-6 py-3 rounded-lg shadow-2xl flex items-center gap-2"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {toastMessage}
+          </motion.div>
         </div>
-      </div>
-    </div>
       )}
     </main>
   );
 }
-

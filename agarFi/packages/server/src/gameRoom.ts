@@ -18,6 +18,7 @@ export class GameRoom {
   playerTargets: Map<string, Vector2>;
   currentMapBounds: { minX: number; maxX: number; minY: number; maxY: number };
   onGameEnd?: () => void;
+  private lastWinCheckTime: number = 0;
   
   constructor(id: string, tier: string, io: Server) {
     this.id = id;
@@ -174,8 +175,11 @@ export class GameRoom {
     // Update stats
     this.updateStats(deltaTime);
 
-    // Check win condition
-    this.checkWinCondition();
+    // Check win condition (only once per second to reduce overhead)
+    if (now - this.lastWinCheckTime >= 1000) {
+      this.checkWinCondition();
+      this.lastWinCheckTime = now;
+    }
 
     // Broadcast state (full state every 500ms, deltas otherwise)
     if (now % 500 < 20) {
@@ -198,8 +202,8 @@ export class GameRoom {
     // Shrink from 0% to 90% of game time (leaves 10% for final battle)
     const shrinkProgress = Math.min(1, progress / 0.9); // 0 to 1, caps at 90% elapsed
     
-    // Shrink map from full size to 30% of original (centered)
-    const shrinkAmount = shrinkProgress * 0.7; // 0 to 0.7 (70% shrink)
+    // Shrink map from full size to 10% of original (centered)
+    const shrinkAmount = shrinkProgress * 0.9; // 0 to 0.9 (90% shrink, leaving 10%)
     const centerX = config.game.mapWidth / 2;
     const centerY = config.game.mapHeight / 2;
     const halfWidth = (config.game.mapWidth / 2) * (1 - shrinkAmount);
@@ -516,7 +520,14 @@ export class GameRoom {
               preySocket.emit('playerEliminated', {});
             }
             
-            console.log(`Player ${preyPlayer.name} eliminated`);
+            // Emit global game event for feed
+            this.io.emit('gameEvent', {
+              type: 'elimination',
+              victim: preyPlayer.name,
+              killer: predatorPlayer?.name || 'Unknown'
+            });
+            
+            console.log(`Player ${preyPlayer.name} eliminated by ${predatorPlayer?.name}`);
           }
         }
       }
@@ -595,13 +606,11 @@ export class GameRoom {
   }
 
   /**
-   * Check win condition
+   * Check win condition (called once per second)
    */
   private checkWinCondition(): void {
     const alivePlayers = Array.from(this.players.values()).filter(p => p.blobs.length > 0);
     const elapsed = Date.now() - this.gameStartTime;
-
-    console.log(`🔍 Win check: ${alivePlayers.length} alive / ${this.players.size} total | ${Math.floor(elapsed/1000)}s elapsed`);
 
     // Last player standing (ONLY if game started with multiple players)
     if (alivePlayers.length === 1 && this.players.size > 1) {
@@ -678,7 +687,27 @@ export class GameRoom {
     // Broadcast game end
     this.io.to(this.id).emit('gameEnd', result);
     
+    // Emit global win event for feed
+    if (winnerId) {
+      const winner = this.players.get(winnerId);
+      if (winner) {
+        const tierNum = this.tier === 'whale' ? 500 : parseInt(this.tier);
+        const prize = Math.floor(tierNum * this.players.size * 0.8);
+        
+        this.io.emit('gameEvent', {
+          type: 'win',
+          winner: winner.name,
+          prize: prize,
+          players: this.players.size
+        });
+      }
+    }
+    
     console.log(`🏁 Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
+    
+    // Clear spectators immediately since game is over
+    console.log(`Clearing ${this.gameState.spectators.size} spectators from ended game`);
+    this.gameState.spectators.clear();
     
     // Schedule cleanup and removal after players see results
     setTimeout(() => {

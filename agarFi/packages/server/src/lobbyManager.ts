@@ -275,6 +275,12 @@ export class LobbyManager {
     // Emit game start
     this.io.to(lobby.id).emit('gameStart', { startTime: game.gameStartTime, gameId: game.id });
 
+    // Emit global game start event for feed
+    this.io.emit('gameEvent', {
+      type: 'game_start',
+      tier: lobby.tier
+    });
+
     console.log(`Game ${game.id} started with ${lobby.players.size} players`);
 
     // Set up game end cleanup - remove game and reset lobby when done
@@ -284,6 +290,7 @@ export class LobbyManager {
       this.resetLobby(lobby);
       this.broadcastSingleLobbyUpdate(lobby);
     };
+
   }
 
   /**
@@ -379,13 +386,6 @@ export class LobbyManager {
   }
 
   /**
-   * Get all active games count
-   */
-  getActiveGamesCount(): number {
-    return this.games.size;
-  }
-
-  /**
    * Remove player from lobby
    */
   leaveLobby(playerId: string): void {
@@ -416,6 +416,13 @@ export class LobbyManager {
     // Get game if playing
     const game = lobby.status === 'playing' ? this.games.get(lobby.id) : null;
     const spectatorCount = game ? game.gameState.spectators.size : lobby.spectators.size;
+    
+    // Calculate time remaining for active games
+    let timeRemaining: number | null = null;
+    if (game && lobby.status === 'playing') {
+      const elapsed = Date.now() - game.gameStartTime;
+      timeRemaining = Math.max(0, game.maxDuration - elapsed);
+    }
     
     let realPlayerCount = 0;
     let botCount = 0;
@@ -451,6 +458,7 @@ export class LobbyManager {
       status: lobby.status,
       countdown,
       spectatorCount,
+      timeRemaining,
     };
 
     this.io.emit('lobbyUpdate', update); // Global for homepage
@@ -469,6 +477,69 @@ export class LobbyManager {
         }
       }
     }, 1000);
+  }
+
+  /**
+   * Get count of active games
+   */
+  getActiveGamesCount(): number {
+    return this.games.size;
+  }
+
+  /**
+   * Get count of players currently in active games (alive and playing)
+   */
+  getPlayersInGameCount(): number {
+    let count = 0;
+    for (const game of this.games.values()) {
+      // Count alive real players only (not bots, and not yet spectating)
+      for (const player of game.players.values()) {
+        if (player.blobs.length > 0 && !player.isBot) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Get total spectator count across all games
+   */
+  getTotalSpectators(): number {
+    let count = 0;
+    for (const game of this.games.values()) {
+      count += game.gameState.spectators.size;
+    }
+    return count;
+  }
+
+  /**
+   * Clean up disconnected spectators from all games
+   */
+  cleanupDisconnectedSpectators(io: Server): number {
+    let removedCount = 0;
+    
+    for (const game of this.games.values()) {
+      const toRemove: string[] = [];
+      
+      for (const socketId of game.gameState.spectators) {
+        const socket = io.sockets.sockets.get(socketId);
+        if (!socket || !socket.connected) {
+          toRemove.push(socketId);
+        }
+      }
+      
+      for (const socketId of toRemove) {
+        game.gameState.spectators.delete(socketId);
+        removedCount++;
+      }
+    }
+    
+    if (removedCount > 0) {
+      console.log(`🧹 Cleaned up ${removedCount} disconnected spectators`);
+    }
+    
+    return removedCount;
   }
 }
 

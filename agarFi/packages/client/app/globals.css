@@ -147,3 +147,30 @@ canvas {
   cursor: crosshair;
 }
 
+/* 3D Transform Support */
+.transform-3d {
+  transform-style: preserve-3d;
+  perspective: 1000px;
+}
+
+/* Smooth Animations */
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 3s infinite linear;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
+  background-size: 1000px 100%;
+}
+

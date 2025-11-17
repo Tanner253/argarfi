@@ -98,6 +98,7 @@ export default function GamePage() {
   const playerIdRef = useRef<string>('');
   const gameStartedRef = useRef<boolean>(false);
   const cameraRef = useRef(camera);
+  const autoRedirectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Update camera ref when camera changes
   useEffect(() => {
@@ -370,8 +371,13 @@ export default function GamePage() {
       setGameEnd(result);
       // Don't clear localStorage yet - need it for game end screen
       
+      // Clear any existing timer
+      if (autoRedirectTimerRef.current) {
+        clearTimeout(autoRedirectTimerRef.current);
+      }
+      
       // Auto-redirect to lobby after 10 seconds
-      setTimeout(() => {
+      autoRedirectTimerRef.current = setTimeout(() => {
         console.log('Auto-redirecting to lobby after game end');
         localStorage.clear();
         window.location.href = '/';
@@ -396,6 +402,12 @@ export default function GamePage() {
 
     return () => {
       console.log('🔌 Disconnecting socket and cleaning up');
+      
+      // Clear auto-redirect timer if it exists
+      if (autoRedirectTimerRef.current) {
+        clearTimeout(autoRedirectTimerRef.current);
+        autoRedirectTimerRef.current = null;
+      }
       
       // Remove from spectators if we were spectating
       if (isSpectating && gameIdRef.current) {
@@ -777,6 +789,32 @@ export default function GamePage() {
     };
   }, [blobs, pellets, camera, killAnimations, mergeAnimations, shrinkAnimations, leaderboard, myPlayerId, isSpectating, spectatingPlayerId]);
 
+  // Handle back button / ESC to leave lobby - MUST BE BEFORE EARLY RETURNS
+  useEffect(() => {
+    if (!gameStarted) {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Backspace' || e.key === 'Escape') {
+          // Leave lobby and return to homepage
+          if (socketRef.current) {
+            socketRef.current.disconnect();
+          }
+          router.push('/');
+        }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [gameStarted, router]);
+
+  // Function to leave lobby - MUST BE BEFORE EARLY RETURNS
+  const leaveLobby = () => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
+    router.push('/');
+  };
+
   if (gameEnd) {
     const myStats = gameEnd.playerStats[myPlayerId];
     const myRanking = gameEnd.finalRankings.findIndex(r => r.id === myPlayerId) + 1;
@@ -859,6 +897,13 @@ export default function GamePage() {
           <button
             onClick={() => {
               console.log('Return to lobby clicked (game end)');
+              
+              // Clear auto-redirect timer
+              if (autoRedirectTimerRef.current) {
+                clearTimeout(autoRedirectTimerRef.current);
+                autoRedirectTimerRef.current = null;
+              }
+              
               if (socketRef.current) {
                 socketRef.current.disconnect();
               }
@@ -912,9 +957,16 @@ export default function GamePage() {
             </div>
           )}
 
+          {/* Leave Lobby Button */}
+          <button
+            onClick={leaveLobby}
+            className="w-full py-3 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400 rounded-xl font-bold transition-all mb-4"
+          >
+            ← Leave Lobby
+          </button>
+
           <div className="text-xs text-gray-500">
-            <p>Controls:</p>
-            <p className="mt-1">Move: Mouse • Split: SPACE • Eject: W</p>
+            <p>Press <kbd className="px-2 py-0.5 bg-gray-700 rounded">ESC</kbd> or <kbd className="px-2 py-0.5 bg-gray-700 rounded">Backspace</kbd> to leave</p>
           </div>
         </div>
       </div>
@@ -997,19 +1049,36 @@ export default function GamePage() {
             {/* Return to Lobby Button */}
           <button
             onClick={() => {
-              console.log('Return to lobby clicked (spectator)');
+              console.log('🏠 Return to lobby clicked (spectator mode)');
+              console.log('Current gameId:', gameIdRef.current);
+              console.log('Socket connected:', socketRef.current?.connected);
+              
+              // Emit leave spectate event and wait for server to process
               if (socketRef.current && gameIdRef.current) {
+                console.log('📤 Emitting leaveSpectate for game:', gameIdRef.current);
                 socketRef.current.emit('leaveSpectate', { gameId: gameIdRef.current });
+                
+                // Wait for server to process (200ms should be enough)
+                setTimeout(() => {
+                  console.log('⏱️ Delay complete, disconnecting socket');
+                  if (socketRef.current) {
+                    socketRef.current.disconnect();
+                  }
+                  localStorage.clear();
+                  window.location.href = '/';
+                }, 200);
+              } else {
+                console.warn('⚠️ No gameId or socket, disconnecting immediately');
+                if (socketRef.current) {
+                  socketRef.current.disconnect();
+                }
+                localStorage.clear();
+                window.location.href = '/';
               }
-              if (socketRef.current) {
-                socketRef.current.disconnect();
-              }
-              localStorage.clear();
-              window.location.href = '/';
             }}
               className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold px-6 py-3 rounded-lg shadow-lg border border-red-400/50 transition-all hover:scale-105 active:scale-95"
             >
-              Return to Lobby
+              ← Return to Lobby
             </button>
           </div>
         );
@@ -1093,27 +1162,30 @@ export default function GamePage() {
         </button>
       )}
 
-      {/* Mass Counter - Top Right */}
-      {!isSpectating && myMass > 0 && (
-        <div className="absolute top-4 right-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-6 py-4 min-w-[180px]">
-          <div className="text-center">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Your Mass</div>
-            <div className="text-3xl font-black text-white">{Math.floor(myMass)}</div>
-          </div>
-        </div>
-      )}
-
-      {/* Game Timer - Top Center Right */}
-      {timeRemaining !== null && (
-        <div className="absolute top-4 right-48 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-6 py-3">
-          <div className="text-center">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Time Left</div>
-            <div className="text-2xl font-bold text-white">
-              {Math.floor(timeRemaining / 60000)}:{String(Math.floor((timeRemaining % 60000) / 1000)).padStart(2, '0')}
+      {/* HUD Top Right - Mass & Timer */}
+      <div className="absolute top-4 right-4 flex items-start gap-3">
+        {/* Game Timer */}
+        {timeRemaining !== null && (
+          <div className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-5 py-3">
+            <div className="text-center">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Time Left</div>
+              <div className="text-xl font-bold text-white">
+                {Math.floor(timeRemaining / 60000)}:{String(Math.floor((timeRemaining % 60000) / 1000)).padStart(2, '0')}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Mass Counter */}
+        {!isSpectating && myMass > 0 && (
+          <div className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-5 py-3">
+            <div className="text-center">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Your Mass</div>
+              <div className="text-2xl font-black text-white">{Math.floor(myMass)}</div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Boundary Warning */}
       {boundaryWarning && !isSpectating && (() => {

@@ -19,6 +19,18 @@ const io = new Server(httpServer, {
 
 const lobbyManager = new LobbyManager(io);
 
+// Track total connected clients
+let connectedClients = 0;
+
+// Helper function to broadcast stats
+const broadcastStats = () => {
+  io.emit('statsUpdate', {
+    connectedClients,
+    playersInGame: lobbyManager.getPlayersInGameCount(),
+    totalSpectators: lobbyManager.getTotalSpectators()
+  });
+};
+
 // REST API Endpoints
 app.get('/api/health', (req: any, res: any) => {
   res.json({ status: 'healthy', timestamp: Date.now() });
@@ -28,13 +40,48 @@ app.get('/api/lobbies', (req: any, res: any) => {
   res.json(lobbyManager.getLobbiesStatus());
 });
 
+app.get('/api/stats', (req: any, res: any) => {
+  res.json({
+    connectedClients,
+    playersInGame: lobbyManager.getPlayersInGameCount(),
+    totalSpectators: lobbyManager.getTotalSpectators()
+  });
+});
+
+app.get('/api/debug/spectators', (req: any, res: any) => {
+  const games = lobbyManager['games'];
+  const spectatorDebug: any = {};
+  
+  for (const [gameId, game] of games.entries()) {
+    spectatorDebug[gameId] = {
+      spectatorCount: game.gameState.spectators.size,
+      spectatorIds: Array.from(game.gameState.spectators),
+      connectedSockets: Array.from(game.gameState.spectators).map(id => {
+        const socket = io.sockets.sockets.get(id);
+        return {
+          socketId: id,
+          connected: socket ? socket.connected : false
+        };
+      })
+    };
+  }
+  
+  res.json({
+    totalGames: games.size,
+    totalSpectators: lobbyManager.getTotalSpectators(),
+    games: spectatorDebug
+  });
+});
+
 app.get('/api/game-modes', (req: any, res: any) => {
   res.json(config.gameModes);
 });
 
 // Socket.io Events
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+  connectedClients++;
+  console.log(`Client connected: ${socket.id} (Total: ${connectedClients})`);
+  broadcastStats();
 
   // Player reconnects to existing game
   socket.on('playerReconnect', ({ playerId, gameId }) => {
@@ -91,6 +138,7 @@ io.on('connection', (socket) => {
       socket.join(result.gameId);
       socket.emit('spectatorJoined', { gameId: result.gameId, tier });
       console.log(`✅ SPECTATOR ${socket.id} joined game ${result.gameId}`);
+      broadcastStats();
     } else {
       console.error(`❌ SPECTATOR JOIN FAILED: ${result.message}`);
       socket.emit('error', { message: result.message || 'Could not join as spectator', code: 400 });
@@ -104,6 +152,7 @@ io.on('connection', (socket) => {
     if (game) {
       game.gameState.spectators.add(socket.id);
       console.log(`Spectator count now: ${game.gameState.spectators.size}`);
+      broadcastStats();
     }
   });
 
@@ -133,30 +182,80 @@ io.on('connection', (socket) => {
 
   // Player leaves spectate mode
   socket.on('leaveSpectate', ({ gameId }) => {
-    console.log(`Spectator ${socket.id} leaving game ${gameId}`);
+    console.log(`👁️ Spectator ${socket.id} requesting to leave game ${gameId}`);
     const game = lobbyManager.getGame(gameId);
     if (game) {
+      const hadSpectator = game.gameState.spectators.has(socket.id);
       game.gameState.spectators.delete(socket.id);
+      console.log(`Spectator removed: ${hadSpectator ? 'YES' : 'NO (was not in set)'}`);
       console.log(`Spectator count now: ${game.gameState.spectators.size}`);
+      console.log(`Total spectators across all games: ${lobbyManager.getTotalSpectators()}`);
+      broadcastStats();
+    } else {
+      console.log(`⚠️ Game ${gameId} not found for spectator leave`);
     }
+  });
+
+  // Global chat message
+  socket.on('chatMessage', ({ username, message }) => {
+    if (!username || !message || message.length > 200) return;
+    
+    // Broadcast to all connected clients
+    io.emit('chatMessage', {
+      username: username.trim(),
+      message: message.trim()
+    });
+    
+    console.log(`💬 Chat: ${username}: ${message}`);
   });
 
   // Player disconnects
   socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+    connectedClients--;
+    console.log(`🔌 Client disconnected: ${socket.id} (Total: ${connectedClients})`);
+    
+    let wasSpectator = false;
     
     // Remove from spectators in all games
     for (const game of lobbyManager['games'].values()) {
       if (game.gameState.spectators.has(socket.id)) {
         game.gameState.spectators.delete(socket.id);
-        console.log(`Removed spectator ${socket.id} from game ${game.id} (${game.gameState.spectators.size} remaining)`);
+        wasSpectator = true;
+        console.log(`👁️ Removed spectator ${socket.id} from game ${game.id} (${game.gameState.spectators.size} remaining)`);
       }
     }
+    
+    if (wasSpectator) {
+      console.log(`Total spectators after cleanup: ${lobbyManager.getTotalSpectators()}`);
+    }
+    
+    // Broadcast updated stats after cleanup
+    console.log(`📊 Broadcasting stats: ${connectedClients} connected, ${lobbyManager.getPlayersInGameCount()} in game, ${lobbyManager.getTotalSpectators()} spectating`);
+    broadcastStats();
   });
 });
 
 // Start lobby broadcast loop
 lobbyManager.broadcastLobbyUpdates();
+
+// Start stats broadcast loop (every 2 seconds to keep counts accurate)
+let statsBroadcastCount = 0;
+setInterval(() => {
+  statsBroadcastCount++;
+  
+  // Clean up disconnected spectators before calculating stats
+  lobbyManager.cleanupDisconnectedSpectators(io);
+  
+  const playersInGame = lobbyManager.getPlayersInGameCount();
+  const totalSpectators = lobbyManager.getTotalSpectators();
+  
+  // Only log every 10 broadcasts (every 20 seconds) to avoid spam
+  if (statsBroadcastCount % 10 === 0) {
+    console.log(`📊 [Periodic] Stats: ${connectedClients} connected | ${playersInGame} in game | ${totalSpectators} spectating | ${connectedClients - playersInGame - totalSpectators} browsing`);
+  }
+  
+  broadcastStats();
+}, 2000);
 
 // Start server
 const PORT = config.server.port;
@@ -204,4 +303,5 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
   shutdown('UNHANDLED_REJECTION');
 });
+
 
