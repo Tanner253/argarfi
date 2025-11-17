@@ -90,6 +90,7 @@ export default function GamePage() {
   const [toastMessage, setToastMessage] = useState<{ message: string; type: 'info' | 'error' | 'success' | 'warning' } | null>(null);
   const [mapBounds, setMapBounds] = useState<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const [boundaryWarning, setBoundaryWarning] = useState<{ startTime: number } | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
 
   const mousePosRef = useRef({ x: 2500, y: 2500 });
   const mouseScreenPosRef = useRef({ x: 0, y: 0 });
@@ -299,7 +300,7 @@ export default function GamePage() {
       }]);
     });
 
-    socket.on('gameState', ({ blobs: newBlobs, pellets: newPellets, leaderboard: newLeaderboard, spectatorCount: specCount, mapBounds: newMapBounds }) => {
+    socket.on('gameState', ({ blobs: newBlobs, pellets: newPellets, leaderboard: newLeaderboard, spectatorCount: specCount, mapBounds: newMapBounds, timeRemaining: timeLeft }) => {
       setBlobs(newBlobs);
       setPellets(newPellets);
       setLeaderboard(newLeaderboard);
@@ -308,6 +309,9 @@ export default function GamePage() {
       }
       if (newMapBounds) {
         setMapBounds(newMapBounds);
+      }
+      if (timeLeft !== undefined) {
+        setTimeRemaining(timeLeft);
       }
 
       // Check if player is dead (only if not already spectating)
@@ -1095,6 +1099,18 @@ export default function GamePage() {
           <div className="text-center">
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Your Mass</div>
             <div className="text-3xl font-black text-white">{Math.floor(myMass)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Game Timer - Top Center Right */}
+      {timeRemaining !== null && (
+        <div className="absolute top-4 right-48 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-6 py-3">
+          <div className="text-center">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Time Left</div>
+            <div className="text-2xl font-bold text-white">
+              {Math.floor(timeRemaining / 60000)}:{String(Math.floor((timeRemaining % 60000) / 1000)).padStart(2, '0')}
+            </div>
           </div>
         </div>
       )}

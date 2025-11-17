@@ -17,6 +17,7 @@ export class GameRoom {
   maxDuration: number;
   playerTargets: Map<string, Vector2>;
   currentMapBounds: { minX: number; maxX: number; minY: number; maxY: number };
+  onGameEnd?: () => void;
   
   constructor(id: string, tier: string, io: Server) {
     this.id = id;
@@ -194,8 +195,8 @@ export class GameRoom {
     const elapsed = Date.now() - this.gameStartTime;
     const progress = elapsed / this.maxDuration; // 0 to 1
 
-    // Start shrinking immediately (for testing - 0% start)
-    const shrinkProgress = progress; // 0 to 1 throughout entire game
+    // Shrink from 0% to 90% of game time (leaves 10% for final battle)
+    const shrinkProgress = Math.min(1, progress / 0.9); // 0 to 1, caps at 90% elapsed
     
     // Shrink map from full size to 30% of original (centered)
     const shrinkAmount = shrinkProgress * 0.7; // 0 to 0.7 (70% shrink)
@@ -681,9 +682,13 @@ export class GameRoom {
     
     // Schedule cleanup and removal after players see results
     setTimeout(() => {
-      console.log(`Stopping and removing game ${this.id}`);
+      console.log(`Stopping game ${this.id}`);
       this.stop();
-      // Game will be removed from lobby manager's games map in stop()
+      
+      // Call lobby manager callback to remove game and reset lobby
+      if (this.onGameEnd) {
+        this.onGameEnd();
+      }
     }, 10000); // 10 seconds to view results
   }
 
@@ -753,12 +758,15 @@ export class GameRoom {
 
     const leaderboard = this.getLeaderboard().slice(0, 10);
 
+    const timeRemaining = Math.max(0, this.maxDuration - (Date.now() - this.gameStartTime));
+
     this.io.to(this.id).emit('gameState', {
       blobs,
       pellets: pelletsArray,
       leaderboard,
       spectatorCount: this.gameState.spectators.size,
       mapBounds: config.game.shrinkingEnabled ? this.currentMapBounds : null,
+      timeRemaining, // Milliseconds remaining
     });
   }
 

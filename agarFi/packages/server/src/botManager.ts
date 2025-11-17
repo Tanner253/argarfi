@@ -36,33 +36,33 @@ export class BotManager {
     const SAFE_MARGIN = 200;
 
     // Find nearest pellet that's WITHIN safe bounds
-    let nearestPellet: { x: number; y: number } | null = null;
+      let nearestPellet: { x: number; y: number } | null = null;
     let minPelletDist = Infinity;
 
-    for (const pellet of gameRoom.pellets.values()) {
+      for (const pellet of gameRoom.pellets.values()) {
       // Skip pellets outside safe zone
       if (pellet.x < bounds.minX + SAFE_MARGIN || pellet.x > bounds.maxX - SAFE_MARGIN ||
           pellet.y < bounds.minY + SAFE_MARGIN || pellet.y > bounds.maxY - SAFE_MARGIN) {
         continue;
       }
 
-      const dist = Math.sqrt(
-        (pellet.x - largestBlob.x) ** 2 + (pellet.y - largestBlob.y) ** 2
-      );
+        const dist = Math.sqrt(
+          (pellet.x - largestBlob.x) ** 2 + (pellet.y - largestBlob.y) ** 2
+        );
       if (dist < 500 && dist < minPelletDist) {
         minPelletDist = dist;
-        nearestPellet = pellet;
+          nearestPellet = pellet;
+        }
       }
-    }
 
     // Find attackable player and nearby bots
     let attackTarget: { x: number; y: number; mass: number; dist: number } | null = null;
     let nearbyBots: Array<{ x: number; y: number }> = [];
 
-    for (const p of gameRoom.players.values()) {
-      if (p.id === botId) continue;
+      for (const p of gameRoom.players.values()) {
+        if (p.id === botId) continue;
       
-      for (const blob of p.blobs) {
+        for (const blob of p.blobs) {
         const dist = Math.sqrt(
           (blob.x - largestBlob.x) ** 2 + (blob.y - largestBlob.y) ** 2
         );
@@ -80,7 +80,7 @@ export class BotManager {
         if (blob.mass < largestBlob.mass * 0.85 && dist < 250) {
           if (!attackTarget || dist < attackTarget.dist) {
             attackTarget = { x: blob.x, y: blob.y, mass: blob.mass, dist };
-          }
+      }
         }
       }
     }
@@ -96,7 +96,7 @@ export class BotManager {
     if (nearestPellet) {
       targetX = nearestPellet.x;
       targetY = nearestPellet.y;
-    }
+      }
     // Priority 2: Wander
     else {
       // Add avoidance randomness if near bots

@@ -277,17 +277,13 @@ export class LobbyManager {
 
     console.log(`Game ${game.id} started with ${lobby.players.size} players`);
 
-    // Set up game end cleanup - wait for game to stop itself
-    const checkGameEnd = setInterval(() => {
-      const gameStillExists = this.games.has(game.id);
-      if (!gameStillExists) {
-        clearInterval(checkGameEnd);
-        console.log(`Game ${game.id} removed, resetting lobby ${lobby.id}`);
-        this.resetLobby(lobby);
-        this.broadcastSingleLobbyUpdate(lobby);
-        console.log(`✅ Lobby ${lobby.id} reset and ready for new game`);
-      }
-    }, 1000);
+    // Set up game end cleanup - remove game and reset lobby when done
+    game.onGameEnd = () => {
+      console.log(`🎮 Game ${game.id} ended callback - removing from games map`);
+      this.games.delete(game.id);
+      this.resetLobby(lobby);
+      this.broadcastSingleLobbyUpdate(lobby);
+    };
   }
 
   /**
