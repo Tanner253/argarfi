@@ -138,8 +138,9 @@ export default function GamePage() {
     }
 
     // Connect to Socket.io
-    console.log('🔌 Connecting to Socket.io server...');
-    const socket = io('http://localhost:3001');
+    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3001';
+    console.log('🔌 Connecting to Socket.io server:', serverUrl);
+    const socket = io(serverUrl);
     socketRef.current = socket;
 
     socket.on('connect', () => {

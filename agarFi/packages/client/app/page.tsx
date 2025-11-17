@@ -123,20 +123,22 @@ export default function HomePage() {
 
     window.addEventListener('resize', handleResize);
 
+    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3001';
+
     // Fetch game modes
-    fetch('http://localhost:3001/api/game-modes')
+    fetch(`${serverUrl}/api/game-modes`)
       .then(res => res.json())
       .then(setGameModes)
       .catch(console.error);
 
     // Initial fetch
-    fetch('http://localhost:3001/api/lobbies')
+    fetch(`${serverUrl}/api/lobbies`)
       .then(res => res.json())
       .then(setLobbies)
       .catch(console.error);
 
     // Connect to Socket.io for real-time updates
-    const socket = require('socket.io-client').io('http://localhost:3001');
+    const socket = require('socket.io-client').io(serverUrl);
     
     socket.on('lobbyUpdate', (update: LobbyStatus) => {
       setLobbies(prev => {
@@ -154,7 +156,7 @@ export default function HomePage() {
     // Update when player dies in active game
     socket.on('playerCountUpdate', ({ tier }: { tier: string }) => {
       // Refetch lobby status for this tier
-      fetch('http://localhost:3001/api/lobbies')
+      fetch(`${serverUrl}/api/lobbies`)
         .then(res => res.json())
         .then(updatedLobbies => {
           setLobbies(updatedLobbies);
