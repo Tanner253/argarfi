@@ -188,7 +188,7 @@ app.get('/api/platform-status', async (req: any, res: any) => {
 
 // Helper function to get real client IP
 function getClientIP(socket: any): string {
-  // Check x-forwarded-for first (for proxies/CDNs like Vercel/Render)
+  // Check x-forwarded-for first (for proxies/CDNs like Vercel/Render/Cloudflare)
   const forwarded = socket.handshake.headers['x-forwarded-for'];
   if (forwarded) {
     // x-forwarded-for can be: "client, proxy1, proxy2"
@@ -201,15 +201,22 @@ function getClientIP(socket: any): string {
   return address || 'unknown';
 }
 
+// Helper to mask IP for logging (privacy)
+function maskIP(ip: string): string {
+  if (ip === 'unknown') return 'unknown';
+  const parts = ip.split('.');
+  if (parts.length === 4) {
+    // IPv4: show first 2 octets only
+    return `${parts[0]}.${parts[1]}.x.x`;
+  }
+  // IPv6: show first segment only
+  return ip.split(':')[0] + ':xxxx';
+}
+
 // Socket.io Events
 io.on('connection', (socket) => {
   connectedClients++;
-  
-  // Get client IP address
-  const clientIP = getClientIP(socket);
-  console.log(`Client connected: ${socket.id} from IP: ${clientIP} (Total: ${connectedClients})`);
-  console.log(`   Headers:`, socket.handshake.headers['x-forwarded-for'], socket.handshake.address);
-  
+  console.log(`Client connected: ${socket.id} (Total: ${connectedClients})`);
   broadcastStats();
 
   // Player reconnects to existing game
@@ -234,20 +241,17 @@ io.on('connection', (socket) => {
   socket.on('playerJoinLobby', ({ playerId, playerName, tier, walletAddress }) => {
     // Get client IP using helper function
     const ipString = getClientIP(socket);
-    
-    console.log(`🎮 Player ${playerName} (${playerId}) attempting to join from IP: ${ipString}`);
-    console.log(`   Current active players from this IP:`, Array.from(activePlayersByIP.get(ipString) || []));
+    const maskedIP = maskIP(ipString);
     
     // Check if IP is whitelisted (dev testing)
     const isWhitelisted = DEV_IP_WHITELIST.includes(ipString);
-    console.log(`   IP whitelisted: ${isWhitelisted}`);
     
     // Anti-farming: Check if this IP already has an active player in a lobby or game
     if (!isWhitelisted && ipString !== 'unknown') {
       const existingPlayers = activePlayersByIP.get(ipString) || new Set();
       
       if (existingPlayers.size > 0) {
-        console.log(`🚫 BLOCKED: IP ${ipString} already has ${existingPlayers.size} active player(s): ${Array.from(existingPlayers)}`);
+        console.log(`🚫 Connection from ${maskedIP} blocked - already has ${existingPlayers.size} active game(s)`);
         socket.emit('error', { 
           message: 'Only one game per connection allowed. Please wait for your current game to finish.',
           code: 429 
@@ -255,8 +259,6 @@ io.on('connection', (socket) => {
         return;
       }
     }
-    
-    console.log(`✅ IP check passed for ${playerName} from ${ipString}`);
     
     // Store wallet address if provided
     if (walletAddress) {
@@ -281,7 +283,7 @@ io.on('connection', (socket) => {
           activePlayersByIP.set(ipString, new Set());
         }
         activePlayersByIP.get(ipString)!.add(playerId);
-        console.log(`📊 Added ${playerId} - IP ${ipString} now has ${activePlayersByIP.get(ipString)!.size} active player(s): ${Array.from(activePlayersByIP.get(ipString)!)}`);
+        console.log(`📊 ${playerName} joined from ${maskIP(ipString)} (${activePlayersByIP.get(ipString)!.size} active from this network)`);
       }
       
       socket.emit('lobbyJoined', { lobbyId, tier });
@@ -370,7 +372,7 @@ io.on('connection', (socket) => {
       if (activePlayersByIP.get(ipString)!.size === 0) {
         activePlayersByIP.delete(ipString);
       }
-      console.log(`📊 IP ${ipString} now has ${activePlayersByIP.get(ipString)?.size || 0} active player(s)`);
+      console.log(`📊 Player left from ${maskIP(ipString)} (${activePlayersByIP.get(ipString)?.size || 0} remaining)`);
     }
     
     broadcastStats();
@@ -439,7 +441,7 @@ io.on('connection', (socket) => {
         if (activePlayersByIP.get(ipString)!.size === 0) {
           activePlayersByIP.delete(ipString);
         }
-        console.log(`📊 IP ${ipString} now has ${activePlayersByIP.get(ipString)?.size || 0} active player(s)`);
+        console.log(`📊 Player left from ${maskIP(ipString)} (${activePlayersByIP.get(ipString)?.size || 0} remaining)`);
       }
       
       // Keep wallet address for payout even if disconnected
