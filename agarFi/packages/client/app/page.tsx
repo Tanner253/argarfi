@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { useWallet } from './components/WalletProvider';
-import { WalletConnectModal } from './components/WalletConnectModal';
+import { useWallet } from './components/useWallet';
 import { TransactionLog } from './components/TransactionLog';
 
 interface GameMode {
@@ -46,13 +45,12 @@ export default function HomePage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const { connected, walletAddress, disconnect } = useWallet();
+  const { connected, walletAddress, disconnect, connect } = useWallet();
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
   const [playerName, setPlayerName] = useState('');
   const [showRoadmap, setShowRoadmap] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [showWalletModal, setShowWalletModal] = useState(false);
   const [showTransactionLog, setShowTransactionLog] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -288,7 +286,7 @@ export default function HomePage() {
   const joinLobby = (tier: string) => {
     // Require wallet connection
     if (!connected) {
-      setShowWalletModal(true);
+      connect(); // Opens official wallet modal
       return;
     }
 
@@ -447,7 +445,7 @@ export default function HomePage() {
               </motion.button>
             ) : (
               <motion.button
-                onClick={() => setShowWalletModal(true)}
+                onClick={connect}
                 className="px-2 md:px-3 py-1.5 bg-neon-green/10 border border-neon-green/30 rounded-lg text-neon-green text-xs font-bold hover:bg-neon-green/20 transition-all flex items-center gap-1.5"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -1224,15 +1222,6 @@ export default function HomePage() {
           </motion.div>
         </div>
       )}
-
-      {/* Wallet Connect Modal */}
-      <WalletConnectModal 
-        isOpen={showWalletModal} 
-        onClose={() => setShowWalletModal(false)}
-        onConnected={() => {
-          console.log('✅ Wallet connected successfully');
-        }}
-      />
 
       {/* Transaction Log Modal */}
       <TransactionLog 
