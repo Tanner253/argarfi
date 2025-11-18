@@ -31,6 +31,7 @@ LOBBY_AUTO_START_COUNTDOWN_MS=5000
 NEXT_PUBLIC_SOCKET_URL=http://localhost:3001
 NEXT_PUBLIC_TARGET_FPS=60
 NEXT_PUBLIC_SOLANA_RPC=https://api.mainnet-beta.solana.com
+NEXT_PUBLIC_WINNER_REWARD_USDC=1
 
 # Game Modes (Phase 1 - Free play, prices for display only)
 GAME_MODE_1=1

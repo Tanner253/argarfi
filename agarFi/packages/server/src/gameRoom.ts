@@ -487,8 +487,10 @@ export class GameRoom {
     const predatorRadius = Physics.calculateRadius(predator.mass);
     const preyRadius = Physics.calculateRadius(prey.mass);
 
+    // Check if blobs are touching AND predator covers at least 50% of prey
     if (Physics.checkCollision(predator.x, predator.y, predatorRadius, prey.x, prey.y, preyRadius)) {
-      if (Physics.canEat(predator.mass, prey.mass)) {
+      if (Physics.canEat(predator.mass, prey.mass) && 
+          Physics.hasMinimumOverlap(predator.x, predator.y, predatorRadius, prey.x, prey.y, preyRadius)) {
         // Predator eats prey
         predator.mass += prey.mass;
         

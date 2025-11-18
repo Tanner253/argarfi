@@ -92,26 +92,35 @@ export default function GamePage() {
   const [mapBounds, setMapBounds] = useState<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const [boundaryWarning, setBoundaryWarning] = useState<{ startTime: number } | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
   const [winnerPayout, setWinnerPayout] = useState<{ amount: number; txSignature: string | null } | null>(null);
+  const [joystickActive, setJoystickActive] = useState(false);
+  const [joystickBase, setJoystickBase] = useState({ x: 0, y: 0 }); // Where user first touched
+  const [joystickHandle, setJoystickHandle] = useState({ x: 0, y: 0 }); // Current drag position
+  const [minimapHidden, setMinimapHidden] = useState(false);
 
   const mousePosRef = useRef({ x: 2500, y: 2500 });
   const mouseScreenPosRef = useRef({ x: 0, y: 0 });
+  const joystickPositionRef = useRef({ x: 0, y: 0 });
+  const lastMovementDirectionRef = useRef({ x: 0, y: 0 }); // For split/eject on mobile
   const gameIdRef = useRef<string>('');
   const playerIdRef = useRef<string>('');
   const gameStartedRef = useRef<boolean>(false);
   const cameraRef = useRef(camera);
   const autoRedirectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isMobileRef = useRef(false);
 
   // Update camera ref when camera changes
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
 
-  // Detect mobile on mount
+  // Detect mobile on mount (use ref to avoid re-renders)
   useEffect(() => {
-    setIsMobile(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+    isMobileRef.current = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   }, []);
+  
+  // For rendering purposes (doesn't trigger camera updates)
+  const isMobile = isMobileRef.current;
 
   useEffect(() => {
     const playerId = localStorage.getItem('playerId');
@@ -368,7 +377,17 @@ export default function GamePage() {
           const avgY = targetBlobs.reduce((sum: number, b: Blob) => sum + b.y, 0) / targetBlobs.length;
           const totalMass = targetBlobs.reduce((sum: number, b: Blob) => sum + b.mass, 0);
           
-          const zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
+          let zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
+          
+          // Platform-specific zoom adjustments
+          if (isMobileRef.current) {
+            // Mobile: zoom out 2x
+            zoom = zoom * 0.5;
+          } else {
+            // Desktop: zoom out 1.5x
+            zoom = zoom * 0.67;
+          }
+          
           setCamera({ x: avgX, y: avgY, zoom });
         }
       }
@@ -479,9 +498,26 @@ export default function GamePage() {
       const avgX = targetBlobs.reduce((sum, b) => sum + b.x, 0) / targetBlobs.length;
       const avgY = targetBlobs.reduce((sum, b) => sum + b.y, 0) / targetBlobs.length;
       const totalMass = targetBlobs.reduce((sum, b) => sum + b.mass, 0);
-      const zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
+      let zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
       
-      setCamera({ x: avgX, y: avgY, zoom });
+      // Platform-specific zoom adjustments
+      if (isMobileRef.current) {
+        // Mobile: zoom out 2x
+        zoom = zoom * 0.5;
+      } else {
+        // Desktop: zoom out 1.5x
+        zoom = zoom * 0.67;
+      }
+      
+      // Only update if camera changed significantly (prevent infinite loops)
+      const currentCam = cameraRef.current;
+      const camChanged = Math.abs(currentCam.x - avgX) > 5 || 
+                         Math.abs(currentCam.y - avgY) > 5 || 
+                         Math.abs(currentCam.zoom - zoom) > 0.01;
+      
+      if (camChanged) {
+        setCamera({ x: avgX, y: avgY, zoom });
+      }
     }
   }, [blobs, isSpectating, spectatingPlayerId]);
 
@@ -511,22 +547,55 @@ export default function GamePage() {
       
       if (!isSpectating && gameStartedRef.current && socket?.connected && gameIdRef.current && playerIdRef.current && canvas) {
         const cam = cameraRef.current;
-        const screenPos = mouseScreenPosRef.current;
         
-        const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
-        const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
+        let worldX, worldY;
+        let shouldMove = false;
         
-        socket.emit('playerMove', {
-          playerId: playerIdRef.current,
-          x: worldX,
-          y: worldY,
-          gameId: gameIdRef.current,
-        });
+        // Mobile joystick movement
+        if (isMobileRef.current) {
+          if (joystickActive) {
+            const pos = joystickPositionRef.current;
+            const directionX = pos.x; // Already normalized
+            const directionY = pos.y;
+            
+            worldX = cam.x + directionX * 1000;
+            worldY = cam.y + directionY * 1000;
+            
+            // Store last direction for split/eject
+            lastMovementDirectionRef.current = { x: directionX, y: directionY };
+            shouldMove = true;
+          }
+        } else {
+          // Desktop mouse movement (always active)
+          const screenPos = mouseScreenPosRef.current;
+          
+          worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
+          worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
+          
+          // Calculate direction vector for split/eject
+          const dirX = screenPos.x - canvas.width / 2;
+          const dirY = screenPos.y - canvas.height / 2;
+          const magnitude = Math.sqrt(dirX * dirX + dirY * dirY);
+          if (magnitude > 0) {
+            lastMovementDirectionRef.current = { x: dirX / magnitude, y: dirY / magnitude };
+          }
+          shouldMove = true;
+        }
+        
+        // Only emit movement if we should move
+        if (shouldMove) {
+          socket.emit('playerMove', {
+            playerId: playerIdRef.current,
+            x: worldX,
+            y: worldY,
+            gameId: gameIdRef.current,
+          });
+        }
       }
     }, 50);
 
     return () => clearInterval(interval);
-  }, [isSpectating]);
+  }, [isSpectating, joystickActive]);
 
   // Handle keyboard controls
   useEffect(() => {
@@ -701,18 +770,21 @@ export default function GamePage() {
 
       const now = Date.now();
       
-      // Clean up old animations (400ms for kill, 300ms for shrink, 500ms for merge)
-      setKillAnimations(prev => prev.filter(a => now - a.startTime < 400));
-      setShrinkAnimations(prev => prev.filter(a => now - a.startTime < 300));
-      setMergeAnimations(prev => prev.filter(a => now - a.startTime < 500));
+      // Filter animations locally - don't call setState in render loop!
+      const activeKillAnimations = killAnimations.filter(a => now - a.startTime < 400);
+      const activeShrinkAnimations = shrinkAnimations.filter(a => now - a.startTime < 300);
+      const activeMergeAnimations = mergeAnimations.filter(a => now - a.startTime < 500);
+
+      // Sort blobs by mass (smallest to largest) so bigger blobs render on top
+      const sortedBlobs = [...blobs].sort((a, b) => a.mass - b.mass);
 
       // Draw blobs
-      blobs.forEach(blob => {
+      sortedBlobs.forEach(blob => {
         const baseRadius = Math.sqrt(blob.mass / Math.PI) * 3;
         let radius = baseRadius;
         
         // Check for merge animation
-        const mergeAnim = mergeAnimations.find(a => a.blobId === blob.id);
+        const mergeAnim = activeMergeAnimations.find(a => a.blobId === blob.id);
         if (mergeAnim) {
           const elapsed = now - mergeAnim.startTime;
           const progress = Math.min(1, elapsed / 500);
@@ -734,7 +806,7 @@ export default function GamePage() {
         }
 
         // Check for shrink animation (victim being eaten)
-        const shrinkAnim = shrinkAnimations.find(a => a.blobId === blob.id);
+        const shrinkAnim = activeShrinkAnimations.find(a => a.blobId === blob.id);
         if (shrinkAnim) {
           const elapsed = now - shrinkAnim.startTime;
           const progress = Math.min(1, elapsed / 300);
@@ -746,7 +818,7 @@ export default function GamePage() {
         }
         
         // Check for kill animation (sun rays + absorption)
-        const killAnim = killAnimations.find(a => a.blobId === blob.id);
+        const killAnim = activeKillAnimations.find(a => a.blobId === blob.id);
         if (killAnim) {
           const elapsed = now - killAnim.startTime;
           const progress = Math.min(1, elapsed / 400);
@@ -832,6 +904,17 @@ export default function GamePage() {
     };
   }, [blobs, pellets, camera, killAnimations, mergeAnimations, shrinkAnimations, leaderboard, myPlayerId, isSpectating, spectatingPlayerId]);
 
+  // Cleanup old animations periodically (separate from render loop)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setKillAnimations(prev => prev.filter(a => now - a.startTime < 400));
+      setShrinkAnimations(prev => prev.filter(a => now - a.startTime < 300));
+      setMergeAnimations(prev => prev.filter(a => now - a.startTime < 500));
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
+
   // Handle back button / ESC to leave lobby - MUST BE BEFORE EARLY RETURNS
   useEffect(() => {
     if (!gameStarted) {
@@ -859,11 +942,11 @@ export default function GamePage() {
       
       // Small delay to let server process
       setTimeout(() => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-    }
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
         localStorage.clear();
-    router.push('/');
+        router.push('/');
       }, 100);
     } else {
       if (socketRef.current) {
@@ -1151,7 +1234,7 @@ export default function GamePage() {
           {/* Winner Reward Banner */}
           <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl p-4 mb-6">
             <div className="text-2xl font-black text-neon-green mb-1">
-              💰 Winner Gets $1 USDC
+              💰 Winner Gets ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC
             </div>
             <div className="text-xs text-gray-400">
               Automatically sent to your wallet
@@ -1229,12 +1312,13 @@ export default function GamePage() {
         
         // Show UI even if player not found yet (loading state)
         return (
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex flex-col gap-3">
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex flex-col gap-3 z-50" style={{ pointerEvents: 'auto' }}>
             {/* Spectator Info Card */}
             <div className="flex items-center gap-2">
               {/* Previous Player Button */}
               <button
                 onClick={() => switchPlayer('left')}
+                onTouchStart={(e) => e.stopPropagation()}
                 className="w-10 h-10 bg-gray-700/90 hover:bg-gray-600 backdrop-blur-md rounded-lg border border-gray-600 shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center"
                 aria-label="Previous player"
               >
@@ -1262,6 +1346,7 @@ export default function GamePage() {
               {/* Next Player Button */}
               <button
                 onClick={() => switchPlayer('right')}
+                onTouchStart={(e) => e.stopPropagation()}
                 className="w-10 h-10 bg-gray-700/90 hover:bg-gray-600 backdrop-blur-md rounded-lg border border-gray-600 shadow-lg transition-all hover:scale-110 active:scale-95 flex items-center justify-center"
                 aria-label="Next player"
               >
@@ -1301,7 +1386,8 @@ export default function GamePage() {
                 window.location.href = '/';
               }
             }}
-              className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold px-6 py-3 rounded-lg shadow-lg border border-red-400/50 transition-all hover:scale-105 active:scale-95"
+            onTouchStart={(e) => e.stopPropagation()}
+            className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold px-6 py-3 rounded-lg shadow-lg border border-red-400/50 transition-all hover:scale-105 active:scale-95"
             >
               ← Return to Lobby
             </button>
@@ -1309,29 +1395,30 @@ export default function GamePage() {
         );
       })()}
 
-      {/* Leaderboard - Top Left (Desktop Only) */}
-      {leaderboardVisible && !isMobile && (
-        <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden w-64">
-          <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-2 flex justify-between items-center">
-            <h3 className="text-white font-bold text-sm uppercase tracking-wide">Leaderboard</h3>
+      {/* Leaderboard - Top Left (Mobile & Desktop) */}
+      {leaderboardVisible && (
+        <div className="absolute top-4 left-4 bg-gray-800/95 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden w-44 sm:w-48 md:w-56 z-40" style={{ pointerEvents: 'auto' }}>
+          <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-3 md:px-4 py-1.5 md:py-2 flex justify-between items-center">
+            <h3 className="text-white font-bold text-xs md:text-sm uppercase tracking-wide">Leaderboard</h3>
             <button
               onClick={() => setLeaderboardVisible(false)}
+              onTouchStart={(e) => e.stopPropagation()}
               className="text-white/70 hover:text-white transition-colors"
               aria-label="Hide leaderboard"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
-          <div className="p-3 space-y-1 max-h-80 overflow-y-auto">
+          <div className="p-2 md:p-3 space-y-1 max-h-80 overflow-y-auto">
             {leaderboard.slice(0, 10).map((entry, index) => {
               const isMe = entry.id === myPlayerId;
               const isSpectated = entry.id === spectatingPlayerId;
               return (
                 <div
                   key={entry.id}
-                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-all ${
+                  className={`flex items-center justify-between px-2 md:px-3 py-1.5 md:py-2 rounded-lg transition-all ${
                     isMe 
                       ? 'bg-yellow-500/20 border border-yellow-500/50' 
                       : isSpectated
@@ -1339,8 +1426,8 @@ export default function GamePage() {
                       : 'bg-gray-700/30 hover:bg-gray-700/50'
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className={`text-sm font-bold ${
+                  <div className="flex items-center gap-1.5 md:gap-2">
+                    <span className={`text-xs md:text-sm font-bold ${
                       index === 0 ? 'text-yellow-400' : 
                       index === 1 ? 'text-gray-300' : 
                       index === 2 ? 'text-orange-400' : 
@@ -1348,7 +1435,7 @@ export default function GamePage() {
                     }`}>
                       #{index + 1}
                     </span>
-                    <span className={`text-sm truncate max-w-[120px] ${
+                    <span className={`text-xs md:text-sm truncate max-w-[50px] sm:max-w-[70px] md:max-w-[100px] ${
                       isMe ? 'text-yellow-400 font-bold' : 
                       isSpectated ? 'text-blue-400 font-bold' : 
                       'text-white'
@@ -1356,7 +1443,7 @@ export default function GamePage() {
                       {entry.name}
                     </span>
                   </div>
-                  <span className="text-sm font-semibold text-blue-400">
+                  <span className="text-xs md:text-sm font-semibold text-blue-400 flex-shrink-0">
                     {Math.floor(entry.mass)}
                   </span>
                 </div>
@@ -1364,7 +1451,7 @@ export default function GamePage() {
             })}
           </div>
           {spectatorCount > 0 && (
-            <div className="px-4 py-2 bg-gray-900/50 border-t border-gray-700">
+            <div className="px-3 md:px-4 py-1.5 md:py-2 bg-gray-900/50 border-t border-gray-700">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-gray-400">Spectators</span>
                 <span className="text-blue-400 font-semibold">👁️ {spectatorCount}</span>
@@ -1374,27 +1461,29 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Show Leaderboard Button (Desktop Only) */}
-      {!leaderboardVisible && !isMobile && (
+      {/* Show Leaderboard Button (Mobile & Desktop) */}
+      {!leaderboardVisible && (
         <button
           onClick={() => setLeaderboardVisible(true)}
-          className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-4 py-2 border border-gray-700 shadow-xl hover:bg-gray-700 transition-colors"
+          onTouchStart={(e) => e.stopPropagation()}
+          className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-3 md:px-4 py-2 border border-gray-700 shadow-xl hover:bg-gray-700 transition-colors z-40"
+          style={{ pointerEvents: 'auto' }}
           aria-label="Show leaderboard"
         >
-          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 md:w-5 md:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
       )}
 
       {/* HUD Top Right - Mass & Timer */}
-      <div className="absolute top-4 right-4 flex items-start gap-3">
+      <div className="absolute top-4 right-4 left-auto flex items-start gap-2 md:gap-3 z-40" style={{ pointerEvents: 'auto' }}>
         {/* Game Timer */}
         {timeRemaining !== null && (
-          <div className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-5 py-3">
+          <div className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-3 md:px-5 py-2 md:py-3">
             <div className="text-center">
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Time Left</div>
-              <div className="text-xl font-bold text-white">
+              <div className="text-lg md:text-xl font-bold text-white">
                 {Math.floor(timeRemaining / 60000)}:{String(Math.floor((timeRemaining % 60000) / 1000)).padStart(2, '0')}
               </div>
             </div>
@@ -1403,10 +1492,10 @@ export default function GamePage() {
 
         {/* Mass Counter */}
         {!isSpectating && myMass > 0 && (
-          <div className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-5 py-3">
+          <div className="bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl px-3 md:px-5 py-2 md:py-3">
             <div className="text-center">
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Your Mass</div>
-              <div className="text-2xl font-black text-white">{Math.floor(myMass)}</div>
+              <div className="text-xl md:text-2xl font-black text-white">{Math.floor(myMass)}</div>
             </div>
           </div>
         )}
@@ -1430,12 +1519,24 @@ export default function GamePage() {
         );
       })()}
 
-      {/* Minimap - Bottom Left */}
-      <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden">
-        <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-3 py-1.5 border-b border-gray-600">
-          <h4 className="text-white font-semibold text-xs uppercase tracking-wide">Map</h4>
-        </div>
-        <div className="relative w-48 h-48 bg-gray-900 p-2">
+      {/* Minimap - Bottom Left (with hide button on mobile) */}
+      {!minimapHidden && (
+        <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden z-40" style={{ pointerEvents: 'auto' }}>
+          <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-3 py-1.5 border-b border-gray-600 flex justify-between items-center">
+            <h4 className="text-white font-semibold text-xs uppercase tracking-wide">Map</h4>
+            {isMobile && (
+              <button
+                onClick={() => setMinimapHidden(true)}
+                onTouchStart={(e) => e.stopPropagation()}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="relative w-48 h-48 bg-gray-900 p-2">
           {blobs.map(blob => {
             const x = (blob.x / 5000) * 192;
             const y = (blob.y / 5000) * 192;
@@ -1472,55 +1573,140 @@ export default function GamePage() {
           />
         </div>
       </div>
+      )}
+      
+      {/* Show Minimap Button (Mobile Only, when hidden) */}
+      {minimapHidden && isMobile && (
+        <button
+          onClick={() => setMinimapHidden(false)}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-3 py-2 border border-gray-700 shadow-xl z-40"
+          style={{ pointerEvents: 'auto' }}
+        >
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+        </button>
+      )}
 
-      {/* Controls Overlay - Mobile Only */}
-      {!isSpectating && (
-        <div className="absolute bottom-4 right-4 flex gap-3 md:hidden">
-          <button
-            onClick={() => {
-              if (!socketRef.current || !canvasRef.current) return;
-              
-              const canvas = canvasRef.current;
-              const cam = cameraRef.current;
-              const screenPos = mouseScreenPosRef.current;
-              
-              const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
-              const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
-              
-              socketRef.current.emit('playerSplit', { 
-                playerId: playerIdRef.current, 
-                gameId: gameIdRef.current,
-                targetX: worldX,
-                targetY: worldY
-              });
+      {/* Mobile Controls */}
+      {!isSpectating && isMobile && (
+        <>
+          {/* Floating Joystick Zone - Full Screen */}
+          <div
+            className="absolute inset-0 md:hidden z-30"
+            style={{ touchAction: 'none', pointerEvents: joystickActive ? 'auto' : 'auto' }}
+            onTouchStart={(e) => {
+              const touch = e.touches[0];
+              setJoystickBase({ x: touch.clientX, y: touch.clientY });
+              setJoystickHandle({ x: touch.clientX, y: touch.clientY });
+              setJoystickActive(true);
             }}
-            className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 rounded-full font-bold text-white shadow-lg border-2 border-green-400/50 active:scale-95 transition-transform"
-          >
-            <div className="text-xs">SPLIT</div>
-          </button>
-          <button
-            onClick={() => {
-              if (!socketRef.current || !canvasRef.current) return;
+            onTouchMove={(e) => {
+              if (!joystickActive) return;
               
-              const canvas = canvasRef.current;
-              const cam = cameraRef.current;
-              const screenPos = mouseScreenPosRef.current;
+              const touch = e.touches[0];
+              const deltaX = touch.clientX - joystickBase.x;
+              const deltaY = touch.clientY - joystickBase.y;
               
-              const worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
-              const worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
+              const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+              const maxRadius = 60;
               
-              socketRef.current.emit('playerEject', { 
-                playerId: playerIdRef.current, 
-                gameId: gameIdRef.current,
-                targetX: worldX,
-                targetY: worldY
-              });
+              let handleX = touch.clientX;
+              let handleY = touch.clientY;
+              
+              if (distance > maxRadius) {
+                handleX = joystickBase.x + (deltaX / distance) * maxRadius;
+                handleY = joystickBase.y + (deltaY / distance) * maxRadius;
+              }
+              
+              setJoystickHandle({ x: handleX, y: handleY });
+              
+              const normalizedX = (handleX - joystickBase.x) / maxRadius;
+              const normalizedY = (handleY - joystickBase.y) / maxRadius;
+              joystickPositionRef.current = { x: normalizedX, y: normalizedY };
+              lastMovementDirectionRef.current = { x: normalizedX, y: normalizedY };
             }}
-            className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 rounded-full font-bold text-white shadow-lg border-2 border-blue-400/50 active:scale-95 transition-transform"
-          >
-            <div className="text-xs">EJECT</div>
-          </button>
-        </div>
+            onTouchEnd={() => {
+              setJoystickActive(false);
+              joystickPositionRef.current = { x: 0, y: 0 };
+            }}
+          />
+          
+          {/* Visual Joystick (appears dynamically) */}
+          {joystickActive && (
+            <>
+              <div
+                className="absolute w-32 h-32 rounded-full bg-gray-800/40 backdrop-blur-sm border-2 border-gray-600/50 pointer-events-none z-40"
+                style={{
+                  left: joystickBase.x - 64,
+                  top: joystickBase.y - 64
+                }}
+              />
+              <div
+                className="absolute w-16 h-16 rounded-full bg-gradient-to-br from-neon-green to-neon-blue border-2 border-white/50 shadow-lg pointer-events-none z-40"
+                style={{
+                  left: joystickHandle.x - 32,
+                  top: joystickHandle.y - 32
+                }}
+              />
+            </>
+          )}
+
+          {/* Action Buttons - Bottom Right (High z-index to prevent click-through) */}
+          <div className="absolute bottom-4 right-4 flex gap-3 md:hidden z-50" style={{ pointerEvents: 'auto' }}>
+            <button
+              onPointerDown={(e) => {
+                e.stopPropagation(); // Don't let click propagate to joystick zone
+                e.preventDefault();
+                if (!socketRef.current) return;
+                
+                const cam = cameraRef.current;
+                const dir = lastMovementDirectionRef.current;
+                
+                // IMPORTANT: Use STORED direction, don't update movement
+                // This ensures tapping button doesn't change where player is moving
+                const worldX = cam.x + dir.x * 500;
+                const worldY = cam.y + dir.y * 500;
+                
+                socketRef.current.emit('playerSplit', { 
+                  playerId: playerIdRef.current, 
+                  gameId: gameIdRef.current,
+                  targetX: worldX,
+                  targetY: worldY
+                });
+              }}
+              className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full font-bold text-white shadow-lg border-2 border-green-400/50 active:scale-95 transition-transform"
+            >
+              <div className="text-xs">SPLIT</div>
+            </button>
+            <button
+              onPointerDown={(e) => {
+                e.stopPropagation(); // Don't let click propagate to joystick zone
+                e.preventDefault();
+                if (!socketRef.current) return;
+                
+                const cam = cameraRef.current;
+                const dir = lastMovementDirectionRef.current;
+                
+                // IMPORTANT: Use STORED direction, don't update movement
+                // This ensures tapping button doesn't change where player is moving
+                const worldX = cam.x + dir.x * 500;
+                const worldY = cam.y + dir.y * 500;
+                
+                socketRef.current.emit('playerEject', { 
+                  playerId: playerIdRef.current, 
+                  gameId: gameIdRef.current,
+                  targetX: worldX,
+                  targetY: worldY
+                });
+              }}
+              className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full font-bold text-white shadow-lg border-2 border-blue-400/50 active:scale-95 transition-transform"
+            >
+              <div className="text-xs">EJECT</div>
+            </button>
+          </div>
+        </>
       )}
 
       {/* Keyboard Controls Info - Desktop only */}

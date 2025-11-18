@@ -495,7 +495,7 @@ export default function HomePage() {
             <div className="max-w-2xl mx-auto mb-4">
               <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl px-4 py-3 text-center">
                 <p className="text-sm md:text-base font-bold text-neon-green mb-1">
-                  🎉 PROMOTIONAL EVENT: Win $1 USDC Per Game! 🎉
+                  🎉 PROMOTIONAL EVENT: Win ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC Per Game! 🎉
                 </p>
                 <p className="text-xs text-gray-400">
                   Connect wallet • Play for FREE • Winners earn real rewards
@@ -546,13 +546,13 @@ export default function HomePage() {
                     {/* Animated Background */}
                     <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/5 via-transparent to-orange-500/5 animate-shimmer" />
                     
-                    {/* Unlock Badge - Top Right */}
-                    <div className="absolute top-3 md:top-4 right-3 md:right-4">
+                    {/* Unlock Badge - Top Center on Mobile, Top Right on Desktop */}
+                    <div className="absolute top-2 left-1/2 -translate-x-1/2 md:left-auto md:right-4 md:translate-x-0">
                       {isLocked ? (
-                        <div className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-500/40 border-2 border-purple-400/60 rounded-lg md:rounded-xl backdrop-blur-sm">
-                          <div className="flex items-center gap-1.5 md:gap-2">
-                            <span className="text-base md:text-lg animate-pulse">💎</span>
-                            <div className="text-xs md:text-sm font-bold text-purple-300">Unlocks at $1M Market Cap</div>
+                        <div className="px-2 md:px-4 py-1 md:py-2 bg-purple-500/40 border border-purple-400/60 rounded-lg backdrop-blur-sm">
+                          <div className="flex items-center gap-1 md:gap-2">
+                            <span className="text-sm md:text-base animate-pulse">💎</span>
+                            <div className="text-xs font-bold text-purple-300 whitespace-nowrap">$1M Market Cap</div>
                           </div>
                         </div>
                       ) : lobby?.status === 'playing' && lobby.timeRemaining !== null && lobby.timeRemaining !== undefined && (
@@ -567,44 +567,44 @@ export default function HomePage() {
                       )}
                     </div>
 
-                    <div className="relative p-4 md:p-6 lg:p-8 flex flex-col items-center">
+                    <div className="relative p-4 md:p-6 lg:p-8 flex flex-col items-center pt-12 md:pt-4">
                       {/* Title Section */}
-                      <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
-                        <span className="text-4xl md:text-5xl lg:text-6xl animate-float">🐋</span>
-                        <div className="text-center md:text-left">
-                          <h3 className="text-3xl sm:text-4xl md:text-5xl font-black gradient-text text-glow-strong mb-1 md:mb-2">
+                      <div className="flex flex-col md:flex-row items-center gap-2 md:gap-4 mb-4 md:mb-6 text-center">
+                        <span className="text-5xl md:text-6xl animate-float">🐋</span>
+                        <div>
+                          <h3 className="text-3xl md:text-4xl lg:text-5xl font-black gradient-text text-glow-strong mb-1">
                             WHALE MODE
                           </h3>
-                          <div className="text-xl sm:text-2xl md:text-3xl font-bold text-white">
+                          <div className="text-lg md:text-2xl lg:text-3xl font-bold text-white">
                             Win ${potentialWinnings.toLocaleString()}
                           </div>
                         </div>
                       </div>
 
                       {/* Prize Grid */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 lg:gap-4 w-full max-w-4xl">
-                        <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Entry Fee</div>
-                          <div className="text-2xl md:text-3xl font-black text-white">$500</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 w-full max-w-4xl">
+                        <div className="bg-black/50 border border-yellow-400/40 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs text-yellow-400 mb-1 font-bold">Entry</div>
+                          <div className="text-xl md:text-3xl font-black text-white">$500</div>
                         </div>
-                        <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Max Players</div>
-                          <div className="text-2xl md:text-3xl font-black text-white">50</div>
+                        <div className="bg-black/50 border border-yellow-400/40 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs text-yellow-400 mb-1 font-bold">Players</div>
+                          <div className="text-xl md:text-3xl font-black text-white">50</div>
                         </div>
-                        <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Total Pool</div>
-                          <div className="text-2xl md:text-3xl font-black text-white">$25K</div>
+                        <div className="bg-black/50 border border-yellow-400/40 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs text-yellow-400 mb-1 font-bold">Pool</div>
+                          <div className="text-xl md:text-3xl font-black text-white">$25K</div>
                         </div>
-                        <div className="bg-gradient-to-br from-yellow-400/30 to-orange-500/30 border-2 border-yellow-400/70 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">🏆 Winner Takes</div>
-                          <div className="text-2xl md:text-3xl font-black gradient-text text-glow">$20K</div>
+                        <div className="bg-gradient-to-br from-yellow-400/30 to-orange-500/30 border-2 border-yellow-400/70 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
+                          <div className="text-xs text-yellow-400 mb-1 font-bold">🏆 Winner</div>
+                          <div className="text-xl md:text-3xl font-black gradient-text text-glow">$20K</div>
                         </div>
                       </div>
 
                       {/* CTA Button */}
-                      <div className="mt-4 md:mt-6 w-full flex justify-center">
+                      <div className="mt-3 md:mt-6 w-full flex justify-center">
                         <motion.button
-                          className="px-8 md:px-12 lg:px-16 py-3 md:py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-xl font-black text-lg md:text-xl"
+                          className="px-6 md:px-12 py-2 md:py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-lg md:rounded-xl font-black text-base md:text-xl"
                           disabled
                         >
                           🔒 Coming Soon
@@ -667,6 +667,16 @@ export default function HomePage() {
                         )}
                       </div>
                     </div>
+
+                    {/* Countdown Timer (if counting down) */}
+                    {lobby?.countdown !== null && lobby?.countdown && lobby.countdown > 0 && (
+                      <div className="bg-yellow-400/20 border border-yellow-400/50 rounded-lg p-3 mb-3 text-center">
+                        <div className="text-xl md:text-2xl font-black text-yellow-400 mb-1">
+                          Starting in {lobby.countdown}s
+                        </div>
+                        <div className="text-xs text-gray-400">Game is starting soon - join now!</div>
+                      </div>
+                    )}
 
                     {/* Stats Row */}
                     {lobby && (

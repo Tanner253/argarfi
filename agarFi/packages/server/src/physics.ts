@@ -48,6 +48,27 @@ export class Physics {
   }
 
   /**
+   * Check if predator overlaps prey by at least 50%
+   * Returns true if the predator's center is covering at least 50% of the prey
+   */
+  static hasMinimumOverlap(
+    predatorX: number,
+    predatorY: number,
+    predatorRadius: number,
+    preyX: number,
+    preyY: number,
+    preyRadius: number
+  ): boolean {
+    const dist = this.distance(predatorX, predatorY, preyX, preyY);
+    
+    // Calculate how much the circles overlap
+    const overlap = (predatorRadius + preyRadius) - dist;
+    
+    // Must overlap by at least 50% of the prey's diameter
+    return overlap >= preyRadius;
+  }
+
+  /**
    * Normalize a vector
    */
   static normalize(v: Vector2): Vector2 {
