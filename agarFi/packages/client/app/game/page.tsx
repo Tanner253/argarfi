@@ -92,6 +92,7 @@ export default function GamePage() {
   const [boundaryWarning, setBoundaryWarning] = useState<{ startTime: number } | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [winnerPayout, setWinnerPayout] = useState<{ amount: number; txSignature: string | null } | null>(null);
 
   const mousePosRef = useRef({ x: 2500, y: 2500 });
   const mouseScreenPosRef = useRef({ x: 0, y: 0 });
@@ -376,6 +377,36 @@ export default function GamePage() {
     socket.on('gameEnd', (result: GameEndResult) => {
       console.log('Game ended:', result);
       setGameEnd(result);
+      
+      const isWinner = result.winnerId === playerId;
+      
+      // Check if I'm the winner - fetch payout info
+      if (isWinner) {
+        console.log('🏆 I won! Checking for payout transaction...');
+        // Give server a moment to process payout, then fetch transaction
+        setTimeout(async () => {
+          try {
+            const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+            const response = await fetch(`${serverUrl}/api/transactions?limit=1`);
+            const data = await response.json();
+            
+            if (data.transactions && data.transactions.length > 0) {
+              const latestTx = data.transactions[0];
+              // Check if this transaction is for me
+              const myWallet = localStorage.getItem('playerWallet');
+              if (latestTx.walletAddress === myWallet && latestTx.winnerId === playerId) {
+                setWinnerPayout({
+                  amount: latestTx.amountUSDC,
+                  txSignature: latestTx.txSignature
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Failed to fetch payout info:', error);
+          }
+        }, 3000); // Wait 3 seconds for payout to process
+      }
+      
       // Don't clear localStorage yet - need it for game end screen
       
       // Clear any existing timer
@@ -383,12 +414,16 @@ export default function GamePage() {
         clearTimeout(autoRedirectTimerRef.current);
       }
       
-      // Auto-redirect to lobby after 10 seconds
-      autoRedirectTimerRef.current = setTimeout(() => {
-        console.log('Auto-redirecting to lobby after game end');
-        localStorage.clear();
-        window.location.href = '/';
-      }, 10000);
+      // Only auto-redirect NON-winners (losers and spectators)
+      if (!isWinner) {
+        console.log('Auto-redirecting non-winner to lobby after 10 seconds');
+        autoRedirectTimerRef.current = setTimeout(() => {
+          localStorage.clear();
+          window.location.href = '/';
+        }, 10000);
+      } else {
+        console.log('🏆 Winner - no auto-redirect, let them enjoy the moment!');
+      }
     });
 
     socket.on('error', ({ message }) => {
@@ -843,10 +878,39 @@ export default function GamePage() {
     const myRanking = gameEnd.finalRankings.findIndex(r => r.id === myPlayerId) + 1;
     const isWinner = gameEnd.winnerId === myPlayerId;
 
+    // Generate share tweet
+    const generateTweet = () => {
+      const stats = myStats || { pelletsEaten: 0, cellsEaten: 0, maxMass: 0, timeSurvived: 0 };
+      const payoutAmount = winnerPayout?.amount || 1;
+      const solscanLink = winnerPayout?.txSignature 
+        ? `\nhttps://solscan.io/tx/${winnerPayout.txSignature}`
+        : '';
+      
+      const tweetText = isWinner
+        ? `🏆 Just won $${payoutAmount} USDC on @agarfi_dev!\n\n` +
+          `📊 Stats:\n` +
+          `• Rank: #${myRanking}\n` +
+          `• Food Eaten: ${stats.pelletsEaten}\n` +
+          `• Cells Eaten: ${stats.cellsEaten}\n` +
+          `• Max Mass: ${Math.floor(stats.maxMass)}\n` +
+          `• Survived: ${Math.floor(stats.timeSurvived)}s\n\n` +
+          `Play free, win crypto 👉 https://agarfi.io\n` +
+          `Join community: https://x.com/i/communities/1989932677966041578${solscanLink}\n\n` +
+          `@osknyo_dev`
+        : `Just played @agarfi_dev - ranked #${myRanking}!\n\n` +
+          `📊 ${stats.pelletsEaten} food • ${stats.cellsEaten} cells • ${Math.floor(stats.maxMass)} mass\n\n` +
+          `Free to play, winners earn USDC 💰\n` +
+          `https://agarfi.io\n\n` +
+          `@osknyo_dev`;
+      
+      const encodedTweet = encodeURIComponent(tweetText);
+      window.open(`https://twitter.com/intent/tweet?text=${encodedTweet}`, '_blank');
+    };
+
     return (
-      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-8">
-        <div className="max-w-2xl w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-8">
-          <h2 className="text-4xl font-black text-center mb-6">
+      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-4 md:p-8">
+        <div className="max-w-2xl w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-6 md:p-8">
+          <h2 className="text-3xl md:text-4xl font-black text-center mb-4 md:mb-6">
             {isWinner ? (
               <span className="gradient-text text-glow">
                 🏆 Victory! 🏆
@@ -856,8 +920,33 @@ export default function GamePage() {
             )}
           </h2>
 
-          <div className="text-center mb-8">
-            <div className="text-6xl font-black text-neon-green mb-2">
+          {/* Winner Payout Banner */}
+          {isWinner && (
+            <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border-2 border-neon-green/50 rounded-xl p-4 md:p-6 mb-6 text-center">
+              <div className="text-4xl md:text-5xl font-black text-neon-green mb-2">
+                +${winnerPayout?.amount || 1} USDC
+              </div>
+              <div className="text-sm text-gray-400 mb-3">
+                {winnerPayout?.txSignature ? '✅ Sent to your wallet' : '⏳ Processing payout...'}
+              </div>
+              {winnerPayout?.txSignature && (
+                <a
+                  href={`https://solscan.io/tx/${winnerPayout.txSignature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-xs text-neon-blue hover:text-neon-green transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  View on Solscan
+                </a>
+              )}
+            </div>
+          )}
+
+          <div className="text-center mb-6 md:mb-8">
+            <div className="text-5xl md:text-6xl font-black text-neon-green mb-2">
               #{myRanking}
             </div>
             <div className="text-gray-400">Final Placement</div>
@@ -917,6 +1006,19 @@ export default function GamePage() {
             </div>
           </div>
 
+          {/* Share on X Button */}
+          {isWinner && (
+            <button
+              onClick={generateTweet}
+              className="w-full py-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-lg font-bold text-white transition-all hover:scale-105 mb-4 flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+              </svg>
+              Share Win on 𝕏
+            </button>
+          )}
+
           <button
             onClick={() => {
               console.log('Return to lobby clicked (game end)');
@@ -937,9 +1039,11 @@ export default function GamePage() {
           >
             Return to Lobby
           </button>
-          <p className="text-xs text-gray-500 text-center mt-3">
-            Auto-redirecting in a few seconds...
-          </p>
+          {!isWinner && (
+            <p className="text-xs text-gray-500 text-center mt-3">
+              Auto-redirecting in a few seconds...
+            </p>
+          )}
         </div>
       </div>
     );

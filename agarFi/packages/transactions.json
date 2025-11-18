@@ -41,6 +41,34 @@
       "playersCount": 2,
       "status": "success",
       "retries": 0
+    },
+    {
+      "id": "tx_1763451371402",
+      "timestamp": 1763451371569,
+      "winnerId": "player_1763451308674",
+      "winnerName": "cvcv",
+      "walletAddress": "56FDihqzReG6uZbnEDYhNi59wwdchcXMZ7LPqkFHSSdR",
+      "amountUSDC": 1,
+      "txSignature": "3rhN9528MNQ6zUgvUfE8QK1r6uHnDE3Zh8phBwfE87ZuJt45PkSFCBm1W6WAsdusyk8UpShE24yRR5wCKgWDVoxY",
+      "gameId": "lobby_1",
+      "tier": "1",
+      "playersCount": 2,
+      "status": "success",
+      "retries": 0
+    },
+    {
+      "id": "tx_1763451563714",
+      "timestamp": 1763451563851,
+      "winnerId": "player_1763451502392",
+      "winnerName": "awdawd",
+      "walletAddress": "56FDihqzReG6uZbnEDYhNi59wwdchcXMZ7LPqkFHSSdR",
+      "amountUSDC": 1,
+      "txSignature": "2PpZY8677koLiPDvH6kfeMH2mF3D3UEojMf5t2KmA5KDiWGb1diowct7JggxYRP3m4PkaV4EXBvW4VRPtddo4YBK",
+      "gameId": "lobby_1",
+      "tier": "1",
+      "playersCount": 2,
+      "status": "success",
+      "retries": 0
     }
   ]
 }
