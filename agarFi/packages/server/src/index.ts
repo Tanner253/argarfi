@@ -23,6 +23,9 @@ const io = new Server(httpServer, {
 // Map to track player wallet addresses
 const playerWallets = new Map<string, string>();
 
+// Map to track which lobby each player is in (for cleanup on disconnect)
+const playerToLobby = new Map<string, string>(); // playerId -> lobbyId
+
 const lobbyManager = new LobbyManager(io);
 
 // Initialize payment service (if configured)
@@ -208,6 +211,10 @@ io.on('connection', (socket) => {
     if (result.success) {
       const lobbyId = `lobby_${tier}`;
       socket.join(lobbyId);
+      
+      // Track which lobby this player is in
+      playerToLobby.set(playerId, lobbyId);
+      
       socket.emit('lobbyJoined', { lobbyId, tier });
       
       // Immediately send lobby status to this player
@@ -280,6 +287,14 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Player leaves lobby (explicit)
+  socket.on('playerLeaveLobby', ({ playerId }) => {
+    console.log(`👋 Player ${playerId} explicitly leaving lobby`);
+    lobbyManager.leaveLobby(playerId);
+    playerToLobby.delete(playerId);
+    broadcastStats();
+  });
+
   // Player leaves spectate mode
   socket.on('leaveSpectate', ({ gameId }) => {
     console.log(`👁️ Spectator ${socket.id} requesting to leave game ${gameId}`);
@@ -314,7 +329,28 @@ io.on('connection', (socket) => {
     connectedClients--;
     console.log(`🔌 Client disconnected: ${socket.id} (Total: ${connectedClients})`);
     
-    // Clean up wallet address (note: we'll keep it for now to process payouts even if disconnected)
+    // Find and remove player from lobby if they were in one
+    let playerIdToRemove: string | null = null;
+    for (const [playerId, lobbyId] of playerToLobby.entries()) {
+      // Find player by socket ID
+      const lobby = lobbyManager['lobbies'].get(lobbyId);
+      if (lobby) {
+        for (const [pid, player] of lobby.players.entries()) {
+          if (player.socketId === socket.id) {
+            playerIdToRemove = pid;
+            break;
+          }
+        }
+      }
+      if (playerIdToRemove) break;
+    }
+    
+    if (playerIdToRemove) {
+      console.log(`👋 Removing disconnected player ${playerIdToRemove} from lobby`);
+      lobbyManager.leaveLobby(playerIdToRemove);
+      playerToLobby.delete(playerIdToRemove);
+      // Keep wallet address for payout even if disconnected
+    }
     
     let wasSpectator = false;
     

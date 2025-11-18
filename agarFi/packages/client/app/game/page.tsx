@@ -91,6 +91,7 @@ export default function GamePage() {
   const [mapBounds, setMapBounds] = useState<{ minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const [boundaryWarning, setBoundaryWarning] = useState<{ startTime: number } | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const mousePosRef = useRef({ x: 2500, y: 2500 });
   const mouseScreenPosRef = useRef({ x: 0, y: 0 });
@@ -104,6 +105,11 @@ export default function GamePage() {
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
+
+  // Detect mobile on mount
+  useEffect(() => {
+    setIsMobile(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+  }, []);
 
   useEffect(() => {
     const playerId = localStorage.getItem('playerId');
@@ -795,11 +801,8 @@ export default function GamePage() {
     if (!gameStarted) {
       const handleKeyDown = (e: KeyboardEvent) => {
         if (e.key === 'Backspace' || e.key === 'Escape') {
-          // Leave lobby and return to homepage
-          if (socketRef.current) {
-            socketRef.current.disconnect();
-          }
-          router.push('/');
+          // Leave lobby properly
+          leaveLobby();
         }
       };
 
@@ -810,10 +813,29 @@ export default function GamePage() {
 
   // Function to leave lobby - MUST BE BEFORE EARLY RETURNS
   const leaveLobby = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
+    console.log('👋 Leaving lobby, emitting playerLeaveLobby event');
+    
+    const playerId = localStorage.getItem('playerId');
+    
+    if (socketRef.current && playerId) {
+      // Notify server we're leaving
+      socketRef.current.emit('playerLeaveLobby', { playerId });
+      
+      // Small delay to let server process
+      setTimeout(() => {
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
+        localStorage.clear();
+        router.push('/');
+      }, 100);
+    } else {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+      localStorage.clear();
+      router.push('/');
     }
-    router.push('/');
   };
 
   if (gameEnd) {
@@ -1095,8 +1117,8 @@ export default function GamePage() {
         );
       })()}
 
-      {/* Leaderboard - Top Left */}
-      {leaderboardVisible && (
+      {/* Leaderboard - Top Left (Desktop Only) */}
+      {leaderboardVisible && !isMobile && (
         <div className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden w-64">
           <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-2 flex justify-between items-center">
             <h3 className="text-white font-bold text-sm uppercase tracking-wide">Leaderboard</h3>
@@ -1160,8 +1182,8 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Show Leaderboard Button */}
-      {!leaderboardVisible && (
+      {/* Show Leaderboard Button (Desktop Only) */}
+      {!leaderboardVisible && !isMobile && (
         <button
           onClick={() => setLeaderboardVisible(true)}
           className="absolute top-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-4 py-2 border border-gray-700 shadow-xl hover:bg-gray-700 transition-colors"

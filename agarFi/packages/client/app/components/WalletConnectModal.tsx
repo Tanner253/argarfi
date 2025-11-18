@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from './WalletProvider';
 
@@ -11,6 +12,11 @@ interface WalletConnectModalProps {
 
 export function WalletConnectModal({ isOpen, onClose, onConnected }: WalletConnectModalProps) {
   const { connect, connecting, error } = useWallet();
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    setIsMobile(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+  }, []);
 
   const handleConnect = async (walletType: 'phantom' | 'solflare') => {
     try {
@@ -24,6 +30,13 @@ export function WalletConnectModal({ isOpen, onClose, onConnected }: WalletConne
 
   const openWalletSite = (url: string) => {
     window.open(url, '_blank');
+  };
+
+  const openPhantomApp = () => {
+    const url = window.location.href;
+    const dappUrl = encodeURIComponent(url);
+    const deepLink = `https://phantom.app/ul/browse/${dappUrl}?ref=${dappUrl}`;
+    window.location.href = deepLink;
   };
 
   return (
@@ -76,6 +89,22 @@ export function WalletConnectModal({ isOpen, onClose, onConnected }: WalletConne
                   </div>
                 </div>
               </div>
+
+              {/* Mobile Instructions */}
+              {isMobile && (
+                <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">📱</span>
+                    <div className="text-sm text-gray-300">
+                      <p className="font-bold text-purple-400 mb-1">Mobile User?</p>
+                      <p className="text-xs text-gray-400">
+                        Tap "Phantom" below to open in the Phantom app. If you don't have Phantom, 
+                        install it first from your app store.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Error Message */}
               {error && (
@@ -156,20 +185,35 @@ export function WalletConnectModal({ isOpen, onClose, onConnected }: WalletConne
                 <p className="text-xs text-gray-400 mb-3">
                   Don't have a wallet?
                 </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openWalletSite('https://phantom.app/')}
-                    className="flex-1 px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 rounded-lg text-xs font-bold transition-all"
-                  >
-                    Get Phantom
-                  </button>
-                  <button
-                    onClick={() => openWalletSite('https://solflare.com/')}
-                    className="flex-1 px-3 py-2 bg-orange-600/20 hover:bg-orange-600/30 border border-orange-500/30 text-orange-300 rounded-lg text-xs font-bold transition-all"
-                  >
-                    Get Solflare
-                  </button>
-                </div>
+                {isMobile ? (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => openWalletSite('https://phantom.app/download')}
+                      className="w-full px-4 py-3 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2"
+                    >
+                      <span>📱</span>
+                      Download Phantom Mobile
+                    </button>
+                    <p className="text-xs text-gray-500 text-center">
+                      Available on iOS App Store & Google Play
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openWalletSite('https://phantom.app/')}
+                      className="flex-1 px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 rounded-lg text-xs font-bold transition-all"
+                    >
+                      Get Phantom
+                    </button>
+                    <button
+                      onClick={() => openWalletSite('https://solflare.com/')}
+                      className="flex-1 px-3 py-2 bg-orange-600/20 hover:bg-orange-600/30 border border-orange-500/30 text-orange-300 rounded-lg text-xs font-bold transition-all"
+                    >
+                      Get Solflare
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>

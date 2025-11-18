@@ -13,6 +13,20 @@ interface WalletContextType {
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
+// Mobile detection helper
+function isMobile(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+// Deep link helper for mobile wallets
+function openPhantomDeepLink() {
+  const url = window.location.href;
+  const dappUrl = encodeURIComponent(url);
+  const deepLink = `https://phantom.app/ul/browse/${dappUrl}?ref=${dappUrl}`;
+  window.location.href = deepLink;
+}
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [connected, setConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -28,8 +42,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.log('💼 Wallet restored from localStorage:', savedAddress);
     }
 
-    // Listen for Phantom wallet changes
-    if (typeof window !== 'undefined') {
+    // Listen for Phantom wallet changes (browser extension)
+    if (typeof window !== 'undefined' && !isMobile()) {
       const handleAccountChanged = (publicKey: any) => {
         if (publicKey) {
           const address = publicKey.toString();
@@ -74,7 +88,47 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      // Try Phantom first
+      // MOBILE: Redirect to Phantom app
+      if (isMobile()) {
+        console.log('📱 Mobile detected - checking for Phantom app');
+        
+        // Check if already in Phantom in-app browser
+        // @ts-ignore
+        if (window.phantom?.solana?.isPhantom) {
+          // @ts-ignore
+          const response = await window.phantom.solana.connect();
+          const address = response.publicKey.toString();
+          
+          setWalletAddress(address);
+          setConnected(true);
+          localStorage.setItem('walletAddress', address);
+          console.log('✅ Phantom mobile wallet connected:', address);
+          return;
+        }
+        
+        // Check for Phantom mobile provider
+        // @ts-ignore
+        if (window.solana?.isPhantom) {
+          // @ts-ignore
+          const response = await window.solana.connect();
+          const address = response.publicKey.toString();
+          
+          setWalletAddress(address);
+          setConnected(true);
+          localStorage.setItem('walletAddress', address);
+          console.log('✅ Phantom mobile connected:', address);
+          return;
+        }
+
+        // Not in Phantom browser - redirect to Phantom app
+        console.log('📱 Redirecting to Phantom app...');
+        openPhantomDeepLink();
+        setError('Opening Phantom app... If nothing happens, please install Phantom mobile.');
+        setConnecting(false);
+        return;
+      }
+
+      // DESKTOP: Try browser extensions
       // @ts-ignore
       if (window.solana?.isPhantom) {
         // @ts-ignore
@@ -106,7 +160,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       throw new Error('No Solana wallet detected. Please install Phantom or Solflare.');
     } catch (err: any) {
       console.error('Wallet connection error:', err);
-      setError(err.message || 'Failed to connect wallet');
+      
+      // User rejected connection
+      if (err.message?.includes('User rejected')) {
+        setError('Connection cancelled');
+      } else {
+        setError(err.message || 'Failed to connect wallet');
+      }
+      
       setConnected(false);
       setWalletAddress(null);
     } finally {
@@ -119,8 +180,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setConnected(false);
     localStorage.removeItem('walletAddress');
     
-    // @ts-ignore
-    if (window.solana?.disconnect) {
+    // @ts-ignore - Phantom wallet API
+    if (window.phantom?.solana?.disconnect) {
+      // @ts-ignore
+      window.phantom.solana.disconnect();
+    // @ts-ignore - Solana wallet API
+    } else if (window.solana?.disconnect) {
       // @ts-ignore
       window.solana.disconnect();
     }
