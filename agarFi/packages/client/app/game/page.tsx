@@ -823,11 +823,11 @@ export default function GamePage() {
       
       // Small delay to let server process
       setTimeout(() => {
-        if (socketRef.current) {
-          socketRef.current.disconnect();
-        }
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
         localStorage.clear();
-        router.push('/');
+    router.push('/');
       }, 100);
     } else {
       if (socketRef.current) {
