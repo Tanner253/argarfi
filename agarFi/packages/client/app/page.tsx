@@ -567,11 +567,11 @@ export default function HomePage() {
                       )}
                     </div>
 
-                    <div className="relative p-4 md:p-6 lg:p-8">
+                    <div className="relative p-4 md:p-6 lg:p-8 flex flex-col items-center">
                       {/* Title Section */}
                       <div className="flex items-center gap-3 md:gap-4 mb-4 md:mb-6">
                         <span className="text-4xl md:text-5xl lg:text-6xl animate-float">🐋</span>
-                        <div>
+                        <div className="text-center md:text-left">
                           <h3 className="text-3xl sm:text-4xl md:text-5xl font-black gradient-text text-glow-strong mb-1 md:mb-2">
                             WHALE MODE
                           </h3>
@@ -582,7 +582,7 @@ export default function HomePage() {
                       </div>
 
                       {/* Prize Grid */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 lg:gap-4 max-w-4xl">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 lg:gap-4 w-full max-w-4xl">
                         <div className="bg-black/50 border border-yellow-400/40 rounded-xl p-3 md:p-4 text-center backdrop-blur-sm">
                           <div className="text-xs md:text-sm text-yellow-400 mb-1 md:mb-2 font-bold">Entry Fee</div>
                           <div className="text-2xl md:text-3xl font-black text-white">$500</div>
@@ -602,7 +602,7 @@ export default function HomePage() {
                       </div>
 
                       {/* CTA Button */}
-                      <div className="mt-4 md:mt-6 text-center">
+                      <div className="mt-4 md:mt-6 w-full flex justify-center">
                         <motion.button
                           className="px-8 md:px-12 lg:px-16 py-3 md:py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-xl font-black text-lg md:text-xl"
                           disabled
