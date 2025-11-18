@@ -47,5 +47,10 @@ SOLANA_NETWORK=mainnet-beta
 PLATFORM_WALLET_PRIVATE_KEY=your_base58_private_key_here_KEEP_SECRET
 USDC_MINT_ADDRESS=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 WINNER_REWARD_USDC=1
+
+# Anti-Farming (IP-based connection limiting)
+# Leave empty in production to enforce 1 game per IP for everyone
+# For local testing, localhost is auto-allowed
+DEV_IP_WHITELIST=
 ```
 

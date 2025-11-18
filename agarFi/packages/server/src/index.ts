@@ -26,6 +26,18 @@ const playerWallets = new Map<string, string>();
 // Map to track which lobby each player is in (for cleanup on disconnect)
 const playerToLobby = new Map<string, string>(); // playerId -> lobbyId
 
+// Anti-farming: Track active players by IP address
+const activePlayersByIP = new Map<string, Set<string>>(); // IP -> Set of playerIds
+
+// Whitelist dev IPs (set via environment variable)
+// Localhost is always whitelisted for testing
+const DEV_IP_WHITELIST = [
+  '127.0.0.1',
+  '::1',
+  '::ffff:127.0.0.1',
+  ...(process.env.DEV_IP_WHITELIST?.split(',').map(ip => ip.trim()).filter(ip => ip) || [])
+];
+
 const lobbyManager = new LobbyManager(io);
 
 // Initialize payment service (if configured)
@@ -177,7 +189,11 @@ app.get('/api/platform-status', async (req: any, res: any) => {
 // Socket.io Events
 io.on('connection', (socket) => {
   connectedClients++;
-  console.log(`Client connected: ${socket.id} (Total: ${connectedClients})`);
+  
+  // Get client IP address
+  const clientIP = socket.handshake.address || socket.handshake.headers['x-forwarded-for'] || 'unknown';
+  console.log(`Client connected: ${socket.id} from IP: ${clientIP} (Total: ${connectedClients})`);
+  
   broadcastStats();
 
   // Player reconnects to existing game
@@ -200,6 +216,27 @@ io.on('connection', (socket) => {
 
   // Player joins lobby (with optional wallet address)
   socket.on('playerJoinLobby', ({ playerId, playerName, tier, walletAddress }) => {
+    // Get client IP
+    const clientIP = socket.handshake.address || socket.handshake.headers['x-forwarded-for'] || 'unknown';
+    const ipString = Array.isArray(clientIP) ? clientIP[0] : clientIP;
+    
+    // Check if IP is whitelisted (dev testing)
+    const isWhitelisted = DEV_IP_WHITELIST.includes(ipString);
+    
+    // Anti-farming: Check if this IP already has an active player in a lobby or game
+    if (!isWhitelisted && ipString !== 'unknown') {
+      const existingPlayers = activePlayersByIP.get(ipString) || new Set();
+      
+      if (existingPlayers.size > 0) {
+        console.log(`🚫 IP ${ipString} already has ${existingPlayers.size} active player(s) - blocking ${playerName}`);
+        socket.emit('error', { 
+          message: 'Only one game per connection allowed. Please wait for your current game to finish.',
+          code: 429 
+        });
+        return;
+      }
+    }
+    
     // Store wallet address if provided
     if (walletAddress) {
       playerWallets.set(playerId, walletAddress);
@@ -214,6 +251,18 @@ io.on('connection', (socket) => {
       
       // Track which lobby this player is in
       playerToLobby.set(playerId, lobbyId);
+      
+      // Track this player under their IP address
+      const clientIP = socket.handshake.address || socket.handshake.headers['x-forwarded-for'] || 'unknown';
+      const ipString = Array.isArray(clientIP) ? clientIP[0] : clientIP;
+      
+      if (ipString !== 'unknown') {
+        if (!activePlayersByIP.has(ipString)) {
+          activePlayersByIP.set(ipString, new Set());
+        }
+        activePlayersByIP.get(ipString)!.add(playerId);
+        console.log(`📊 IP ${ipString} now has ${activePlayersByIP.get(ipString)!.size} active player(s)`);
+      }
       
       socket.emit('lobbyJoined', { lobbyId, tier });
       
@@ -292,6 +341,19 @@ io.on('connection', (socket) => {
     console.log(`👋 Player ${playerId} explicitly leaving lobby`);
     lobbyManager.leaveLobby(playerId);
     playerToLobby.delete(playerId);
+    
+    // Remove from IP tracking
+    const clientIP = socket.handshake.address || socket.handshake.headers['x-forwarded-for'] || 'unknown';
+    const ipString = Array.isArray(clientIP) ? clientIP[0] : clientIP;
+    
+    if (ipString !== 'unknown' && activePlayersByIP.has(ipString)) {
+      activePlayersByIP.get(ipString)!.delete(playerId);
+      if (activePlayersByIP.get(ipString)!.size === 0) {
+        activePlayersByIP.delete(ipString);
+      }
+      console.log(`📊 IP ${ipString} now has ${activePlayersByIP.get(ipString)?.size || 0} active player(s)`);
+    }
+    
     broadcastStats();
   });
 
@@ -349,6 +411,19 @@ io.on('connection', (socket) => {
       console.log(`👋 Removing disconnected player ${playerIdToRemove} from lobby`);
       lobbyManager.leaveLobby(playerIdToRemove);
       playerToLobby.delete(playerIdToRemove);
+      
+      // Remove from IP tracking
+      const clientIP = socket.handshake.address || socket.handshake.headers['x-forwarded-for'] || 'unknown';
+      const ipString = Array.isArray(clientIP) ? clientIP[0] : clientIP;
+      
+      if (ipString !== 'unknown' && activePlayersByIP.has(ipString)) {
+        activePlayersByIP.get(ipString)!.delete(playerIdToRemove);
+        if (activePlayersByIP.get(ipString)!.size === 0) {
+          activePlayersByIP.delete(ipString);
+        }
+        console.log(`📊 IP ${ipString} now has ${activePlayersByIP.get(ipString)?.size || 0} active player(s)`);
+      }
+      
       // Keep wallet address for payout even if disconnected
     }
     
