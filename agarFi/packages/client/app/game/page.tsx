@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
+import { motion } from 'framer-motion';
 
 interface Blob {
   id: string;
@@ -417,10 +418,10 @@ export default function GamePage() {
       // Only auto-redirect NON-winners (losers and spectators)
       if (!isWinner) {
         console.log('Auto-redirecting non-winner to lobby after 10 seconds');
-        autoRedirectTimerRef.current = setTimeout(() => {
-          localStorage.clear();
-          window.location.href = '/';
-        }, 10000);
+      autoRedirectTimerRef.current = setTimeout(() => {
+        localStorage.clear();
+        window.location.href = '/';
+      }, 10000);
       } else {
         console.log('🏆 Winner - no auto-redirect, let them enjoy the moment!');
       }
@@ -878,6 +879,15 @@ export default function GamePage() {
     const myRanking = gameEnd.finalRankings.findIndex(r => r.id === myPlayerId) + 1;
     const isWinner = gameEnd.winnerId === myPlayerId;
 
+    // Confetti pieces (simple, clean)
+    const confettiPieces = Array.from({ length: 50 }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      delay: Math.random() * 0.5,
+      duration: 2 + Math.random() * 2,
+      color: ['#39FF14', '#00F0FF', '#BC13FE', '#FFD700'][Math.floor(Math.random() * 4)]
+    }));
+
     // Generate share tweet
     const generateTweet = () => {
       const stats = myStats || { pelletsEaten: 0, cellsEaten: 0, maxMass: 0, timeSurvived: 0 };
@@ -908,13 +918,75 @@ export default function GamePage() {
     };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-4 md:p-8">
-        <div className="max-w-2xl w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-6 md:p-8">
-          <h2 className="text-3xl md:text-4xl font-black text-center mb-4 md:mb-6">
+      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-4 md:p-8 relative overflow-hidden">
+        {/* Confetti (Winners Only) */}
+        {isWinner && (
+          <div className="fixed inset-0 pointer-events-none overflow-hidden">
+            {confettiPieces.map(piece => (
+              <motion.div
+                key={piece.id}
+                initial={{ y: -20, x: `${piece.left}vw`, opacity: 1, rotate: 0 }}
+                animate={{ 
+                  y: '110vh',
+                  rotate: 360 * 3,
+                  opacity: [1, 1, 0.5, 0]
+                }}
+                transition={{
+                  duration: piece.duration,
+                  delay: piece.delay,
+                  ease: 'linear'
+                }}
+                className="absolute w-2 h-2 md:w-3 md:h-3"
+                style={{ 
+                  backgroundColor: piece.color,
+                  left: 0
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', duration: 0.6 }}
+          className="max-w-2xl w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-6 md:p-8 relative z-10"
+        >
+          {/* Floating Trophy (Winners Only) */}
+          {isWinner && (
+            <motion.div
+              initial={{ y: -100, scale: 0 }}
+              animate={{ y: 0, scale: 1 }}
+              transition={{ type: 'spring', bounce: 0.5, duration: 1 }}
+              className="absolute -top-12 md:-top-16 left-1/2 -translate-x-1/2 text-6xl md:text-8xl"
+            >
+              <motion.div
+                animate={{ 
+                  y: [0, -10, 0],
+                  rotate: [0, 5, 0, -5, 0]
+                }}
+                transition={{
+                  duration: 3,
+                  repeat: Infinity,
+                  ease: 'easeInOut'
+                }}
+              >
+                🏆
+              </motion.div>
+            </motion.div>
+          )}
+
+          <h2 className="text-3xl md:text-4xl font-black text-center mb-4 md:mb-6 mt-4">
             {isWinner ? (
-              <span className="gradient-text text-glow">
-                🏆 Victory! 🏆
-              </span>
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', delay: 0.3 }}
+              >
+                <span className="gradient-text text-glow">
+                  VICTORY!
+                </span>
+              </motion.div>
             ) : (
               <span className="text-white">Game Over</span>
             )}
@@ -922,7 +994,12 @@ export default function GamePage() {
 
           {/* Winner Payout Banner */}
           {isWinner && (
-            <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border-2 border-neon-green/50 rounded-xl p-4 md:p-6 mb-6 text-center">
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.5 }}
+              className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border-2 border-neon-green/50 rounded-xl p-4 md:p-6 mb-6 text-center"
+            >
               <div className="text-4xl md:text-5xl font-black text-neon-green mb-2">
                 +${winnerPayout?.amount || 1} USDC
               </div>
@@ -942,7 +1019,7 @@ export default function GamePage() {
                   View on Solscan
                 </a>
               )}
-            </div>
+            </motion.div>
           )}
 
           <div className="text-center mb-6 md:mb-8">
@@ -1008,18 +1085,29 @@ export default function GamePage() {
 
           {/* Share on X Button */}
           {isWinner && (
-            <button
+            <motion.button
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.7 }}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={generateTweet}
-              className="w-full py-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-lg font-bold text-white transition-all hover:scale-105 mb-4 flex items-center justify-center gap-2"
+              className="w-full py-4 md:py-5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-xl font-bold text-white transition-all mb-4 flex items-center justify-center gap-2 text-base md:text-lg shadow-lg"
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
               </svg>
               Share Win on 𝕏
-            </button>
+              <span className="text-xl">🚀</span>
+            </motion.button>
           )}
 
-          <button
+          <motion.button
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: isWinner ? 0.9 : 0.3 }}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => {
               console.log('Return to lobby clicked (game end)');
               
@@ -1035,16 +1123,16 @@ export default function GamePage() {
               localStorage.clear();
               window.location.href = '/';
             }}
-            className="w-full py-4 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green hover:to-neon-blue rounded-lg font-bold text-black transition-all hover:box-glow hover:scale-105"
+            className="w-full py-4 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green hover:to-neon-blue rounded-lg font-bold text-black transition-all"
           >
             Return to Lobby
-          </button>
+          </motion.button>
           {!isWinner && (
-            <p className="text-xs text-gray-500 text-center mt-3">
-              Auto-redirecting in a few seconds...
-            </p>
+           <p className="text-xs text-gray-500 text-center mt-3">
+             Auto-redirecting in a few seconds...
+           </p>
           )}
-        </div>
+        </motion.div>
       </div>
     );
   }
