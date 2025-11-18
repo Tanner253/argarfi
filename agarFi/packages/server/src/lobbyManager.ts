@@ -184,8 +184,11 @@ export class LobbyManager {
     // Check if we should start countdown
     this.checkLobbyCountdown(lobby);
 
-    // Auto-fill bots in dev mode
-    if (config.dev.autoFillBots && lobby.players.size < config.lobby.minPlayers) {
+    // Auto-fill bots in dev mode (only if lobby is waiting and no game exists)
+    if (config.dev.autoFillBots && 
+        lobby.status === 'waiting' && 
+        !this.games.has(lobby.id) &&
+        lobby.players.size < config.lobby.minPlayers) {
       this.fillWithBots(lobby);
     }
 
@@ -201,6 +204,11 @@ export class LobbyManager {
     const needed = Math.min(config.lobby.minPlayers - lobby.players.size, MAX_BOTS - currentBotCount);
     
     if (needed <= 0) return;
+    
+    // SAFEGUARD: Don't fill if game already exists or not waiting
+    if (this.games.has(lobby.id) || lobby.status !== 'waiting') {
+      return;
+    }
     
     for (let i = 0; i < needed; i++) {
       const botId = `bot_${Date.now()}_${i}`;
@@ -234,14 +242,25 @@ export class LobbyManager {
    * Check if lobby should start countdown
    */
   private checkLobbyCountdown(lobby: Lobby): void {
+    // SAFEGUARD: Don't start countdown if game already exists
+    if (this.games.has(lobby.id)) {
+      console.log(`⚠️ Game ${lobby.id} already exists - skipping countdown`);
+      return;
+    }
+    
+    // SAFEGUARD: Only start from 'waiting' status
+    if (lobby.status !== 'waiting') {
+      return;
+    }
+    
     // In dev mode with MIN_PLAYERS_DEV=1, start immediately
-    if (lobby.status === 'waiting' && config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
+    if (config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
       console.log(`Dev mode: Starting game immediately with ${lobby.players.size} player(s)`);
       this.startGame(lobby);
       return;
     }
 
-    if (lobby.status === 'waiting' && lobby.players.size >= config.lobby.minPlayers) {
+    if (lobby.players.size >= config.lobby.minPlayers) {
       lobby.status = 'countdown';
       lobby.countdownStartTime = Date.now();
 
@@ -249,7 +268,12 @@ export class LobbyManager {
 
       // Start countdown timer
       setTimeout(() => {
-        this.startGame(lobby);
+        // Double-check before starting
+        if (lobby.status === 'countdown' && !this.games.has(lobby.id)) {
+          this.startGame(lobby);
+        } else {
+          console.log(`⚠️ Countdown finished but lobby ${lobby.id} status is ${lobby.status} or game exists - skipping start`);
+        }
       }, config.lobby.autoStartCountdown);
     }
   }
@@ -267,8 +291,27 @@ export class LobbyManager {
       return;
     }
 
+    // SAFEGUARD: Don't start if a game already exists
+    if (this.games.has(lobby.id)) {
+      console.log(`⚠️ Game ${lobby.id} already exists - aborting start`);
+      return;
+    }
+    
+    // SAFEGUARD: Only start from 'waiting' or 'countdown' status
+    if (lobby.status !== 'waiting' && lobby.status !== 'countdown') {
+      console.log(`⚠️ Lobby ${lobby.id} status is ${lobby.status} - aborting start`);
+      return;
+    }
+
     lobby.status = 'playing';
     lobby.gameStartTime = Date.now();
+    
+    const humanPlayers = Array.from(lobby.players.values()).filter(p => !p.isBot);
+    const botPlayers = Array.from(lobby.players.values()).filter(p => p.isBot);
+    console.log(`✅ STARTING GAME ${lobby.id}`);
+    console.log(`   Tier: ${lobby.tier}`);
+    console.log(`   Players: ${humanPlayers.length} human, ${botPlayers.length} bots`);
+    console.log(`   Human players: ${humanPlayers.map(p => p.name).join(', ')}`);
 
     // Create game room
     const game = new GameRoom(lobby.id, lobby.tier, this.io);
@@ -326,11 +369,23 @@ export class LobbyManager {
       this.onLobbyReset(playerIds);
     }
     
+    // Clear all lobby state
     lobby.players.clear();
     lobby.spectators.clear();
     lobby.status = 'waiting';
     lobby.countdownStartTime = null;
     lobby.gameStartTime = null;
+    
+    // SAFEGUARD: Ensure no game exists for this lobby
+    if (this.games.has(lobby.id)) {
+      console.log(`⚠️ Found orphaned game ${lobby.id} during reset - removing it`);
+      const game = this.games.get(lobby.id);
+      if (game) {
+        game.stop();
+      }
+      this.games.delete(lobby.id);
+    }
+    
     console.log(`Lobby ${lobby.id} now in WAITING state, ready for new players`);
   }
 

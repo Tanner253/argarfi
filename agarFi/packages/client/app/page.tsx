@@ -61,6 +61,7 @@ export default function HomePage() {
   const [playersInGame, setPlayersInGame] = useState(0);
   const [totalSpectators, setTotalSpectators] = useState(0);
   const [platformStatus, setPlatformStatus] = useState<{ canPay: boolean; message: string } | null>(null);
+  const [bgPosition, setBgPosition] = useState({ x: 50, y: 50 }); // Parallax background position
 
   const CONTRACT_ADDRESS = '6WQxQRguwYVwrHpFkNJsLK2XRnWLuqaLuQ8VBGXupump';
 
@@ -173,6 +174,10 @@ export default function HomePage() {
       setLobbies(prev => {
         const index = prev.findIndex(l => l.tier === update.tier);
         if (index >= 0) {
+          // Check if data actually changed
+          if (JSON.stringify(prev[index]) === JSON.stringify(update)) {
+            return prev; // No change, prevent re-render
+          }
           const newLobbies = [...prev];
           newLobbies[index] = update;
           return newLobbies;
@@ -183,10 +188,21 @@ export default function HomePage() {
     });
 
     socket.on('playerCountUpdate', ({ tier }: { tier: string }) => {
+      // Only fetch lobbies, don't trigger full re-render unless data actually changed
       fetch(`${serverUrl}/api/lobbies`)
         .then(res => res.json())
         .then(updatedLobbies => {
-          setLobbies(updatedLobbies);
+          setLobbies(prev => {
+            // Deep comparison - only update if data actually changed
+            const prevLobby = prev.find(l => l.tier === tier);
+            const newLobby = updatedLobbies.find((l: LobbyStatus) => l.tier === tier);
+            
+            if (JSON.stringify(prevLobby) === JSON.stringify(newLobby)) {
+              return prev; // No change, don't trigger re-render
+            }
+            
+            return updatedLobbies;
+          });
         })
         .catch(console.error);
     });
@@ -201,11 +217,14 @@ export default function HomePage() {
       };
 
       if (event.type === 'elimination' && event.killer && event.victim) {
-        newEvent.message = `${event.victim} eliminated by ${event.killer}`;
+        const shortVictim = event.victim.length > 10 ? event.victim.substring(0, 10) + '...' : event.victim;
+        const shortKiller = event.killer.length > 10 ? event.killer.substring(0, 10) + '...' : event.killer;
+        newEvent.message = `${shortVictim} ← ${shortKiller}`;
       } else if (event.type === 'win' && event.winner && event.prize && event.players) {
-        newEvent.message = `${event.winner} won $${event.prize.toLocaleString()} (${event.players} players)`;
+        const shortWinner = event.winner.length > 10 ? event.winner.substring(0, 10) + '...' : event.winner;
+        newEvent.message = `${shortWinner} won $${event.prize.toLocaleString()}`;
       } else if (event.type === 'game_start' && event.tier) {
-        newEvent.message = `$${event.tier} game starting now!`;
+        newEvent.message = `$${event.tier} game starting!`;
       }
 
       // Show only one event at a time
@@ -310,6 +329,25 @@ export default function HomePage() {
     router.push('/game');
   };
 
+  // Parallax background effect
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const _w = window.innerWidth / 2;
+      const _h = window.innerHeight / 2;
+      const _mouseX = e.clientX;
+      const _mouseY = e.clientY;
+      
+      // Smooth parallax calculation
+      const bgX = 50 - (_mouseX - _w) * 0.01;
+      const bgY = 50 - (_mouseY - _h) * 0.01;
+      
+      setBgPosition({ x: bgX, y: bgY });
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -344,7 +382,22 @@ export default function HomePage() {
 
   return (
     <main className="relative min-h-screen overflow-hidden">
-      <canvas ref={canvasRef} id="particles" className="fixed inset-0 z-0" />
+      {/* Parallax Background Image */}
+      <div 
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: 'url(/bg.jpg)',
+          backgroundSize: '120%', // 20% zoom in
+          backgroundPosition: `${bgPosition.x}% ${bgPosition.y}%`,
+          backgroundRepeat: 'no-repeat',
+        }}
+      />
+      
+      {/* Dark overlay for better readability */}
+      <div className="fixed inset-0 z-0 bg-black/40" />
+      
+      {/* Particle Canvas on top of background */}
+      <canvas ref={canvasRef} id="particles" className="fixed inset-0 z-1" />
       
       <div className="blob blob-1" />
       <div className="blob blob-2" />
@@ -352,7 +405,7 @@ export default function HomePage() {
 
       {/* Top Bar - Minimal */}
       <motion.nav
-        className="fixed top-0 left-0 right-0 z-50 bg-cyber-dark/60 backdrop-blur-xl border-b border-neon-green/10"
+        className="fixed top-0 left-0 right-0 z-50 bg-cyber-dark/60 backdrop-blur-xl border-b border-neon-green/10 shadow-xl"
         initial={{ y: -100 }}
         animate={{ y: 0 }}
       >
@@ -470,21 +523,21 @@ export default function HomePage() {
             initial={{ opacity: 0, y: -30 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <h2 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black gradient-text text-glow-strong mb-3 md:mb-4">
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-black gradient-text text-glow-strong mb-2 drop-shadow-2xl">
               Choose Your Battle
             </h2>
-            <p className="text-base md:text-lg text-gray-400 mb-2">
+            <p className="text-sm md:text-base text-gray-200 mb-2 drop-shadow-lg">
               Pick your stakes, dominate the arena, win big
             </p>
-            <p className="text-xs text-white/60 mb-2">
+            <p className="text-xs text-gray-300 mb-3 drop-shadow">
               Bots will not be in live games when in production
             </p>
             
             {/* Platform Status Banner */}
             {platformStatus && !platformStatus.canPay && (
-              <div className="max-w-md mx-auto mb-4">
-                <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg px-4 py-2 text-center">
-                  <p className="text-xs font-bold text-yellow-400">
+              <div className="max-w-md mx-auto mb-3">
+                <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg px-4 py-2 text-center shadow-lg">
+                  <p className="text-xs font-bold text-yellow-400 drop-shadow">
                     ⚠️ {platformStatus.message}
                   </p>
                 </div>
@@ -492,12 +545,12 @@ export default function HomePage() {
             )}
             
             {/* Promo Banner */}
-            <div className="max-w-2xl mx-auto mb-4">
-              <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl px-4 py-3 text-center">
-                <p className="text-sm md:text-base font-bold text-neon-green mb-1">
+            <div className="max-w-2xl mx-auto mb-3">
+              <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl px-4 py-2.5 text-center shadow-lg">
+                <p className="text-sm md:text-base font-bold text-neon-green mb-1 drop-shadow-lg">
                   🎉 PROMOTIONAL EVENT: Win ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC Per Game! 🎉
                 </p>
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-200 drop-shadow">
                   Connect wallet • Play for FREE • Winners earn real rewards
                 </p>
               </div>
@@ -522,7 +575,7 @@ export default function HomePage() {
           </motion.div>
 
           {/* Game Modes - Hero Cards */}
-          <div className="space-y-4">
+          <div className="space-y-8 md:space-y-10">
             {/* Whale Mode First (if exists) */}
             {gameModes.filter(m => m.tier === 'whale').map((mode, index) => {
               const lobby = getLobbyStatus(mode.tier);
@@ -542,7 +595,7 @@ export default function HomePage() {
                   {/* Epic Glow */}
                   <div className="absolute -inset-1 rounded-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-500 blur-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 animate-pulse" />
 
-                  <div className="relative bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-xl border-2 border-yellow-400/70 rounded-2xl overflow-hidden">
+                  <div className="relative bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-xl border-2 border-yellow-400/70 rounded-2xl overflow-hidden shadow-2xl">
                     {/* Animated Background */}
                     <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/5 via-transparent to-orange-500/5 animate-shimmer" />
                     
@@ -617,7 +670,7 @@ export default function HomePage() {
             })}
 
             {/* Regular Game Modes Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 auto-rows-fr">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 auto-rows-fr">
             {gameModes.filter(m => m.tier !== 'whale').map((mode, index) => {
               const lobby = getLobbyStatus(mode.tier);
               const isLocked = mode.locked;
@@ -635,9 +688,9 @@ export default function HomePage() {
                   {/* Hover Glow */}
                   <div className="absolute -inset-0.5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur bg-neon-green" />
 
-                  <div className="relative bg-cyber-dark/80 backdrop-blur-xl border border-neon-green/30 hover:border-neon-green rounded-xl p-4 md:p-5 transition-all h-full flex flex-col">
+                  <div className="relative bg-cyber-dark/85 backdrop-blur-xl border border-neon-green/30 hover:border-neon-green rounded-xl p-3 md:p-4 transition-all h-full flex flex-col shadow-xl">
                     {/* Header */}
-                    <div className="flex items-start justify-between mb-3 md:mb-4">
+                    <div className="flex items-start justify-between mb-2 md:mb-3">
                       <div>
                         <h3 className="text-xl md:text-2xl font-black mb-1 text-white">
                           ${mode.buyIn} Entry
@@ -706,6 +759,7 @@ export default function HomePage() {
                         <div className="h-1.5 bg-cyber-darker rounded-full overflow-hidden">
                           <motion.div 
                             className="h-full bg-gradient-to-r from-neon-green to-neon-blue"
+                            initial={false}
                             animate={{ width: `${((lobby.playersLocked || 0) / lobby.maxPlayers) * 100}%` }}
                             transition={{ duration: 0.5 }}
                           />

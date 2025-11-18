@@ -706,17 +706,23 @@ export class GameRoom {
       }
     }
     
-    console.log(`🏁 Game ${this.id} ended. Winner: ${winnerId || 'None'}`);
+    console.log(`🏁 GAME END: ${this.id}`);
+    console.log(`   Winner: ${winnerId ? this.players.get(winnerId)?.name : 'None'} (${winnerId || 'N/A'})`);
+    console.log(`   Duration: ${((Date.now() - this.gameStartTime) / 1000).toFixed(1)}s`);
+    console.log(`   Total players: ${this.players.size}`);
     
     // Trigger winner payout if callback provided
     if (winnerId && this.onWinnerDetermined) {
       const winner = this.players.get(winnerId);
       if (winner && !winner.isBot) {
+        console.log(`💰 Winner is human player - triggering payout for ${winner.name}`);
         // Trigger payout asynchronously (don't block game end)
         this.onWinnerDetermined(winnerId, winner.name, this.id, this.tier, this.players.size)
           .catch(error => {
-            console.error(`Failed to process winner payout:`, error);
+            console.error(`❌ PAYOUT FAILED for ${winner.name}:`, error);
           });
+      } else if (winner?.isBot) {
+        console.log(`🤖 Winner is bot (${winner.name}) - no payout`);
       }
     }
     
@@ -724,16 +730,14 @@ export class GameRoom {
     console.log(`Clearing ${this.gameState.spectators.size} spectators from ended game`);
     this.gameState.spectators.clear();
     
-    // Schedule cleanup and removal after players see results
-    setTimeout(() => {
-      console.log(`Stopping game ${this.id}`);
-      this.stop();
-      
-      // Call lobby manager callback to remove game and reset lobby
-      if (this.onGameEnd) {
-        this.onGameEnd();
-      }
-    }, 10000); // 10 seconds to view results
+    // Stop the game IMMEDIATELY (clears all state including tick loop)
+    this.stop();
+    
+    // Call lobby manager callback to remove game and reset lobby
+    // This allows a new game to start right away without conflicts
+    if (this.onGameEnd) {
+      this.onGameEnd();
+    }
   }
 
   /**

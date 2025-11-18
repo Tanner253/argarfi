@@ -216,7 +216,8 @@ function maskIP(ip: string): string {
 // Socket.io Events
 io.on('connection', (socket) => {
   connectedClients++;
-  console.log(`Client connected: ${socket.id} (Total: ${connectedClients})`);
+  const clientIP = maskIP(getClientIP(socket));
+  console.log(`🔌 NEW CONNECTION: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
   broadcastStats();
 
   // Player reconnects to existing game
@@ -263,7 +264,10 @@ io.on('connection', (socket) => {
     // Store wallet address if provided
     if (walletAddress) {
       playerWallets.set(playerId, walletAddress);
-      console.log(`💼 Wallet registered for ${playerName}: ${walletAddress}`);
+      const shortWallet = `${walletAddress.substring(0, 8)}...${walletAddress.substring(walletAddress.length - 4)}`;
+      console.log(`💼 Wallet: ${playerName} → ${shortWallet}`);
+    } else {
+      console.warn(`⚠️ No wallet: ${playerName}`);
     }
     
     const result = lobbyManager.joinLobby(socket.id, playerId, playerName, tier);
@@ -410,7 +414,8 @@ io.on('connection', (socket) => {
   // Player disconnects
   socket.on('disconnect', () => {
     connectedClients--;
-    console.log(`🔌 Client disconnected: ${socket.id} (Total: ${connectedClients})`);
+    const clientIP = maskIP(getClientIP(socket));
+    console.log(`🔌 DISCONNECT: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
     
     // Find and remove player from lobby if they were in one
     let playerIdToRemove: string | null = null;
@@ -429,7 +434,21 @@ io.on('connection', (socket) => {
     }
     
     if (playerIdToRemove) {
-      console.log(`👋 Removing disconnected player ${playerIdToRemove} from lobby`);
+      // Get lobby from playerToLobby map
+      const lobbyId = playerToLobby.get(playerIdToRemove);
+      let playerName = playerIdToRemove;
+      
+      if (lobbyId) {
+        // Access lobby directly from lobbyManager's private lobbies map
+        const lobby = lobbyManager['lobbies'].get(lobbyId);
+        if (lobby) {
+          const player = lobby.players.get(playerIdToRemove);
+          playerName = player?.name || playerIdToRemove;
+        }
+      }
+      
+      console.log(`👋 PLAYER LEFT: ${playerName} disconnected`);
+      
       lobbyManager.leaveLobby(playerIdToRemove);
       playerToLobby.delete(playerIdToRemove);
       
@@ -441,7 +460,7 @@ io.on('connection', (socket) => {
         if (activePlayersByIP.get(ipString)!.size === 0) {
           activePlayersByIP.delete(ipString);
         }
-        console.log(`📊 Player left from ${maskIP(ipString)} (${activePlayersByIP.get(ipString)?.size || 0} remaining)`);
+        console.log(`📊 IP cleared: ${maskIP(ipString)} (${activePlayersByIP.get(ipString)?.size || 0} remaining)`);
       }
       
       // Keep wallet address for payout even if disconnected

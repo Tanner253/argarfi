@@ -289,6 +289,25 @@ export default function GamePage() {
       console.log('✅ Spectator mode active');
     });
 
+    // Player elimination broadcast (for all players to see)
+    socket.on('playerEliminatedBroadcast', ({ victimName, killerName, remainingPlayers }) => {
+      // Shorten names if needed for mobile
+      const shortVictim = victimName.length > 12 ? victimName.substring(0, 12) + '...' : victimName;
+      const shortKiller = killerName.length > 12 ? killerName.substring(0, 12) + '...' : killerName;
+      
+      if (killerName === 'Boundary') {
+        setToastMessage({ 
+          message: `${shortVictim} out (${remainingPlayers} left)`, 
+          type: 'warning' 
+        });
+      } else {
+        setToastMessage({ 
+          message: `${shortVictim} ← ${shortKiller} (${remainingPlayers} left)`, 
+          type: 'info' 
+        });
+      }
+    });
+
     // Server tells us when a blob kills another
     socket.on('blobKilled', ({ killerBlobId, victimBlobId, victimX, victimY }) => {
       const now = Date.now();
@@ -488,7 +507,7 @@ export default function GamePage() {
     }
   }, [toastMessage]);
 
-  // SPECTATOR CAMERA LOCK - Updates whenever blobs or spectated player changes
+  // SPECTATOR CAMERA LOCK - Smoothly interpolates to follow spectated player
   useEffect(() => {
     if (!isSpectating || !spectatingPlayerId || blobs.length === 0) return;
 
@@ -500,24 +519,18 @@ export default function GamePage() {
       const totalMass = targetBlobs.reduce((sum, b) => sum + b.mass, 0);
       let zoom = Math.max(0.2, Math.min(1.5, 200 / Math.sqrt(totalMass)));
       
-      // Platform-specific zoom adjustments
-      if (isMobileRef.current) {
-        // Mobile: zoom out 2x
-        zoom = zoom * 0.5;
-      } else {
-        // Desktop: zoom out 1.5x
-        zoom = zoom * 0.67;
-      }
+      // Zoom out 2x for all platforms
+      zoom = zoom * 0.5;
       
-      // Only update if camera changed significantly (prevent infinite loops)
+      // Smooth camera movement with lerp (linear interpolation) - reduces jitter
       const currentCam = cameraRef.current;
-      const camChanged = Math.abs(currentCam.x - avgX) > 5 || 
-                         Math.abs(currentCam.y - avgY) > 5 || 
-                         Math.abs(currentCam.zoom - zoom) > 0.01;
+      const lerp = 0.15; // Smoothing factor (lower = smoother but slower)
       
-      if (camChanged) {
-        setCamera({ x: avgX, y: avgY, zoom });
-      }
+      const smoothX = currentCam.x + (avgX - currentCam.x) * lerp;
+      const smoothY = currentCam.y + (avgY - currentCam.y) * lerp;
+      const smoothZoom = currentCam.zoom + (zoom - currentCam.zoom) * lerp;
+      
+      setCamera({ x: smoothX, y: smoothY, zoom: smoothZoom });
     }
   }, [blobs, isSpectating, spectatingPlayerId]);
 
@@ -567,11 +580,11 @@ export default function GamePage() {
           }
         } else {
           // Desktop mouse movement (always active)
-          const screenPos = mouseScreenPosRef.current;
-          
+        const screenPos = mouseScreenPosRef.current;
+        
           worldX = cam.x + (screenPos.x - canvas.width / 2) / cam.zoom;
           worldY = cam.y + (screenPos.y - canvas.height / 2) / cam.zoom;
-          
+        
           // Calculate direction vector for split/eject
           const dirX = screenPos.x - canvas.width / 2;
           const dirY = screenPos.y - canvas.height / 2;
@@ -584,12 +597,12 @@ export default function GamePage() {
         
         // Only emit movement if we should move
         if (shouldMove) {
-          socket.emit('playerMove', {
-            playerId: playerIdRef.current,
-            x: worldX,
-            y: worldY,
-            gameId: gameIdRef.current,
-          });
+        socket.emit('playerMove', {
+          playerId: playerIdRef.current,
+          x: worldX,
+          y: worldY,
+          gameId: gameIdRef.current,
+        });
         }
       }
     }, 50);
@@ -942,11 +955,11 @@ export default function GamePage() {
       
       // Small delay to let server process
       setTimeout(() => {
-        if (socketRef.current) {
-          socketRef.current.disconnect();
-        }
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+    }
         localStorage.clear();
-        router.push('/');
+    router.push('/');
       }, 100);
     } else {
       if (socketRef.current) {
@@ -1066,9 +1079,9 @@ export default function GamePage() {
                 animate={{ scale: 1 }}
                 transition={{ type: 'spring', delay: 0.3 }}
               >
-                <span className="gradient-text text-glow">
+              <span className="gradient-text text-glow">
                   VICTORY!
-                </span>
+              </span>
               </motion.div>
             ) : (
               <span className="text-white">Game Over</span>
@@ -1211,9 +1224,9 @@ export default function GamePage() {
             Return to Lobby
           </motion.button>
           {!isWinner && (
-           <p className="text-xs text-gray-500 text-center mt-3">
-             Auto-redirecting in a few seconds...
-           </p>
+          <p className="text-xs text-gray-500 text-center mt-3">
+            Auto-redirecting in a few seconds...
+          </p>
           )}
         </motion.div>
       </div>
@@ -1387,7 +1400,7 @@ export default function GamePage() {
               }
             }}
             onTouchStart={(e) => e.stopPropagation()}
-            className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold px-6 py-3 rounded-lg shadow-lg border border-red-400/50 transition-all hover:scale-105 active:scale-95"
+              className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold px-6 py-3 rounded-lg shadow-lg border border-red-400/50 transition-all hover:scale-105 active:scale-95"
             >
               ← Return to Lobby
             </button>
@@ -1523,7 +1536,7 @@ export default function GamePage() {
       {!minimapHidden && (
         <div className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden z-40" style={{ pointerEvents: 'auto' }}>
           <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-3 py-1.5 border-b border-gray-600 flex justify-between items-center">
-            <h4 className="text-white font-semibold text-xs uppercase tracking-wide">Map</h4>
+          <h4 className="text-white font-semibold text-xs uppercase tracking-wide">Map</h4>
             {isMobile && (
               <button
                 onClick={() => setMinimapHidden(true)}
@@ -1535,8 +1548,8 @@ export default function GamePage() {
                 </svg>
               </button>
             )}
-          </div>
-          <div className="relative w-48 h-48 bg-gray-900 p-2">
+        </div>
+        <div className="relative w-48 h-48 bg-gray-900 p-2">
           {blobs.map(blob => {
             const x = (blob.x / 5000) * 192;
             const y = (blob.y / 5000) * 192;
@@ -1574,10 +1587,10 @@ export default function GamePage() {
         </div>
       </div>
       )}
-      
+
       {/* Show Minimap Button (Mobile Only, when hidden) */}
       {minimapHidden && isMobile && (
-        <button
+          <button
           onClick={() => setMinimapHidden(false)}
           onTouchStart={(e) => e.stopPropagation()}
           className="absolute bottom-4 left-4 bg-gray-800/90 backdrop-blur-md rounded-lg px-3 py-2 border border-gray-700 shadow-xl z-40"
@@ -1661,51 +1674,51 @@ export default function GamePage() {
                 e.preventDefault();
                 if (!socketRef.current) return;
                 
-                const cam = cameraRef.current;
+              const cam = cameraRef.current;
                 const dir = lastMovementDirectionRef.current;
-                
+              
                 // IMPORTANT: Use STORED direction, don't update movement
                 // This ensures tapping button doesn't change where player is moving
                 const worldX = cam.x + dir.x * 500;
                 const worldY = cam.y + dir.y * 500;
-                
-                socketRef.current.emit('playerSplit', { 
-                  playerId: playerIdRef.current, 
-                  gameId: gameIdRef.current,
-                  targetX: worldX,
-                  targetY: worldY
-                });
-              }}
+              
+              socketRef.current.emit('playerSplit', { 
+                playerId: playerIdRef.current, 
+                gameId: gameIdRef.current,
+                targetX: worldX,
+                targetY: worldY
+              });
+            }}
               className="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full font-bold text-white shadow-lg border-2 border-green-400/50 active:scale-95 transition-transform"
-            >
-              <div className="text-xs">SPLIT</div>
-            </button>
-            <button
+          >
+            <div className="text-xs">SPLIT</div>
+          </button>
+          <button
               onPointerDown={(e) => {
                 e.stopPropagation(); // Don't let click propagate to joystick zone
                 e.preventDefault();
                 if (!socketRef.current) return;
-                
-                const cam = cameraRef.current;
+              
+              const cam = cameraRef.current;
                 const dir = lastMovementDirectionRef.current;
-                
+              
                 // IMPORTANT: Use STORED direction, don't update movement
                 // This ensures tapping button doesn't change where player is moving
                 const worldX = cam.x + dir.x * 500;
                 const worldY = cam.y + dir.y * 500;
-                
-                socketRef.current.emit('playerEject', { 
-                  playerId: playerIdRef.current, 
-                  gameId: gameIdRef.current,
-                  targetX: worldX,
-                  targetY: worldY
-                });
-              }}
+              
+              socketRef.current.emit('playerEject', { 
+                playerId: playerIdRef.current, 
+                gameId: gameIdRef.current,
+                targetX: worldX,
+                targetY: worldY
+              });
+            }}
               className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full font-bold text-white shadow-lg border-2 border-blue-400/50 active:scale-95 transition-transform"
-            >
-              <div className="text-xs">EJECT</div>
-            </button>
-          </div>
+          >
+            <div className="text-xs">EJECT</div>
+          </button>
+        </div>
         </>
       )}
 
@@ -1727,48 +1740,14 @@ export default function GamePage() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 animate-slideIn">
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 md:top-4 md:left-auto md:right-4 md:translate-x-0 z-50 animate-slideIn px-4 md:px-0">
           <div className={`bg-gradient-to-r ${
             toastMessage.type === 'error' ? 'from-red-500 to-rose-600' :
             toastMessage.type === 'success' ? 'from-green-500 to-emerald-600' :
             toastMessage.type === 'warning' ? 'from-yellow-500 to-orange-500' :
             'from-blue-500 to-cyan-500'
-          } text-white px-6 py-4 rounded-lg shadow-2xl border border-white/20 backdrop-blur-md max-w-md`}>
-            <div className="flex items-start gap-3">
-              <div className="flex-shrink-0">
-                {toastMessage.type === 'error' && (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-                {toastMessage.type === 'success' && (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-                {toastMessage.type === 'warning' && (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                )}
-                {toastMessage.type === 'info' && (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium">{toastMessage.message}</p>
-              </div>
-              <button
-                onClick={() => setToastMessage(null)}
-                className="flex-shrink-0 text-white/80 hover:text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+          } text-white px-4 py-3 rounded-lg shadow-2xl border border-white/20 backdrop-blur-md`}>
+            <p className="text-sm font-medium text-center md:text-left">{toastMessage.message}</p>
           </div>
         </div>
       )}
