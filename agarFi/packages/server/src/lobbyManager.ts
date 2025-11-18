@@ -10,6 +10,7 @@ export class LobbyManager {
   private io: Server;
   private botManager: BotManager;
   private onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>;
+  private onLobbyReset?: (playerIds: string[]) => void;
 
   constructor(io: Server) {
     this.lobbies = new Map();
@@ -26,6 +27,13 @@ export class LobbyManager {
    */
   setWinnerPayoutCallback(callback: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>): void {
     this.onWinnerDetermined = callback;
+  }
+
+  /**
+   * Set lobby reset callback (for clearing IP tracking)
+   */
+  setLobbyResetCallback(callback: (playerIds: string[]) => void): void {
+    this.onLobbyReset = callback;
   }
 
   /**
@@ -311,6 +319,13 @@ export class LobbyManager {
    */
   private resetLobby(lobby: Lobby): void {
     console.log(`Resetting lobby ${lobby.id} - clearing ${lobby.players.size} players, ${lobby.spectators.size} spectators`);
+    
+    // Call callback to clear IP tracking for these players
+    const playerIds = Array.from(lobby.players.keys());
+    if (playerIds.length > 0 && this.onLobbyReset) {
+      this.onLobbyReset(playerIds);
+    }
+    
     lobby.players.clear();
     lobby.spectators.clear();
     lobby.status = 'waiting';

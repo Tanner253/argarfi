@@ -468,6 +468,24 @@ io.on('connection', (socket) => {
   });
 });
 
+// Set lobby reset callback to clear IP tracking
+lobbyManager.setLobbyResetCallback((playerIds: string[]) => {
+  console.log(`🧹 Lobby reset - clearing IP tracking for ${playerIds.length} players`);
+  
+  for (const playerId of playerIds) {
+    // Find and remove this player from IP tracking
+    for (const [ip, players] of activePlayersByIP.entries()) {
+      if (players.has(playerId)) {
+        players.delete(playerId);
+        if (players.size === 0) {
+          activePlayersByIP.delete(ip);
+        }
+        console.log(`   Cleared ${playerId} from ${maskIP(ip)}`);
+      }
+    }
+  }
+});
+
 // Start lobby broadcast loop
 lobbyManager.broadcastLobbyUpdates();
 
