@@ -37,6 +37,13 @@ export class LobbyManager {
   }
 
   /**
+   * Set cheat detection callback
+   */
+  setCheatDetectionCallback(callback: (playerId: string, playerName: string, reason: string) => void): void {
+    this['onCheatDetected'] = callback;
+  }
+
+  /**
    * Initialize lobbies for all game modes
    */
   private initializeLobbies(): void {
@@ -347,6 +354,11 @@ export class LobbyManager {
       game.onWinnerDetermined = this.onWinnerDetermined;
     }
 
+    // Set up cheat detection callback (passed from index.ts)
+    if (this['onCheatDetected']) {
+      game.onCheatDetected = this['onCheatDetected'];
+    }
+
     // Set up game end cleanup - remove game and reset lobby when done
     game.onGameEnd = () => {
       console.log(`🎮 Game ${game.id} ended callback - removing from games map`);
@@ -427,6 +439,15 @@ export class LobbyManager {
    */
   getGame(gameId: string): GameRoom | undefined {
     return this.games.get(gameId);
+  }
+
+  getGameForPlayer(playerId: string): GameRoom | undefined {
+    for (const game of this.games.values()) {
+      if (game.players.has(playerId)) {
+        return game;
+      }
+    }
+    return undefined;
   }
 
   /**

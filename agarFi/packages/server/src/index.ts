@@ -7,6 +7,7 @@ import { LobbyManager } from './lobbyManager.js';
 import { WalletManager } from './wallet/walletManager.js';
 import { PaymentService } from './wallet/paymentService.js';
 import { getAllTransactions, getRecentTransactions } from './wallet/transactionLogger.js';
+import { loadBannedIPs, saveBan, getAllBans } from './banManager.js';
 
 const app = express();
 app.use(cors());
@@ -28,6 +29,9 @@ const playerToLobby = new Map<string, string>(); // playerId -> lobbyId
 
 // Anti-farming: Track active players by IP address
 const activePlayersByIP = new Map<string, Set<string>>(); // IP -> Set of playerIds
+
+// Anti-cheat: Banned IPs (loaded from file for persistence)
+const bannedIPs = loadBannedIPs();
 
 // Whitelist dev IPs (set via environment variable)
 // Localhost is always whitelisted for testing
@@ -186,6 +190,12 @@ app.get('/api/platform-status', async (req: any, res: any) => {
   }
 });
 
+// API endpoint to get banned IPs (admin use)
+app.get('/api/bans', (req: any, res: any) => {
+  const bans = getAllBans();
+  res.json({ bans, count: bans.length });
+});
+
 // Helper function to get real client IP
 function getClientIP(socket: any): string {
   // Check x-forwarded-for first (for proxies/CDNs like Vercel/Render/Cloudflare)
@@ -213,10 +223,68 @@ function maskIP(ip: string): string {
   return ip.split(':')[0] + ':xxxx';
 }
 
+// Function to ban IP and kick player
+function banIPAndKick(ip: string, playerId: string, playerName: string, reason: string) {
+  if (DEV_IP_WHITELIST.includes(ip)) {
+    console.log(`⚠️ Skipping ban for whitelisted IP: ${maskIP(ip)}`);
+    return;
+  }
+  
+  bannedIPs.add(ip);
+  saveBan(ip, playerName, reason); // Save to file for persistence
+  console.log(`🚫 IP BANNED: ${maskIP(ip)} - Reason: ${reason} - Player: ${playerName}`);
+  
+  // Find and kick the player
+  const game = lobbyManager.getGameForPlayer(playerId);
+  if (game) {
+    const player = game.players.get(playerId);
+    if (player) {
+      const socket = io.sockets.sockets.get(player.socketId);
+      if (socket) {
+        socket.emit('error', { message: 'You have been banned for cheating.', code: 403 });
+        socket.disconnect();
+        console.log(`⛔ Kicked ${playerName} from game`);
+      }
+    }
+  }
+  
+  // Clear from active tracking
+  activePlayersByIP.delete(ip);
+  playerToLobby.delete(playerId);
+}
+
+// Helper to get IP for a player ID
+function getClientIPForPlayer(playerId: string): string | null {
+  const lobbyId = playerToLobby.get(playerId);
+  if (!lobbyId) return null;
+  
+  const lobby = lobbyManager['lobbies'].get(lobbyId);
+  if (!lobby) return null;
+  
+  const player = lobby.players.get(playerId);
+  if (!player) return null;
+  
+  const socket = io.sockets.sockets.get(player.socketId);
+  if (!socket) return null;
+  
+  return getClientIP(socket);
+}
+
 // Socket.io Events
 io.on('connection', (socket) => {
   connectedClients++;
   const clientIP = maskIP(getClientIP(socket));
+  const fullIP = getClientIP(socket);
+  
+  // Check if IP is banned
+  if (bannedIPs.has(fullIP)) {
+    console.log(`🚫 BANNED IP attempted connection: ${clientIP}`);
+    socket.emit('error', { message: 'You have been banned.', code: 403 });
+    socket.disconnect();
+    connectedClients--;
+    return;
+  }
+  
   console.log(`🔌 NEW CONNECTION: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
   broadcastStats();
 
@@ -502,6 +570,14 @@ lobbyManager.setLobbyResetCallback((playerIds: string[]) => {
         console.log(`   Cleared ${playerId} from ${maskIP(ip)}`);
       }
     }
+  }
+});
+
+// Set cheat detection callback to ban cheaters
+lobbyManager.setCheatDetectionCallback((playerId: string, playerName: string, reason: string) => {
+  const ipString = getClientIPForPlayer(playerId);
+  if (ipString && ipString !== 'unknown') {
+    banIPAndKick(ipString, playerId, playerName, reason);
   }
 });
 

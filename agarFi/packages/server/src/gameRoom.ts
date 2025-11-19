@@ -19,6 +19,7 @@ export class GameRoom {
   currentMapBounds: { minX: number; maxX: number; minY: number; maxY: number };
   onGameEnd?: () => void;
   onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>;
+  onCheatDetected?: (playerId: string, playerName: string, reason: string) => void;
   private lastWinCheckTime: number = 0;
   
   constructor(id: string, tier: string, io: Server) {
@@ -420,13 +421,10 @@ export class GameRoom {
       
       // ANTI-CHEAT: Validate mass conservation
       const massAfter = player.blobs.reduce((sum, b) => sum + b.mass, 0);
-      if (massAfter > massBefore + 1) { // Allow 1 mass tolerance for floating point
-        console.error(`🚨 ANTI-CHEAT: ${player.name} mass increased from ${Math.floor(massBefore)} to ${Math.floor(massAfter)} during merge - REVERTING`);
-        // This should never happen - mass can only stay same or decrease (when eating pellets elsewhere)
-        // Force correction
-        const excessMass = massAfter - massBefore;
-        if (player.blobs.length > 0) {
-          player.blobs[0].mass = Math.max(10, player.blobs[0].mass - excessMass);
+      if (massAfter > massBefore + 50) { // Allow 50 mass tolerance (for eating pellets during merge)
+        console.error(`🚨 CHEATER DETECTED: ${player.name} (${player.id}) - Mass exploit: ${Math.floor(massBefore)} → ${Math.floor(massAfter)}`);
+        if (this.onCheatDetected && !player.isBot) {
+          this.onCheatDetected(player.id, player.name, `Mass duplication: ${Math.floor(massBefore)} → ${Math.floor(massAfter)}`);
         }
       }
     }
