@@ -352,6 +352,9 @@ export class GameRoom {
     const MERGE_COOLDOWN = 30000; // 30 seconds like agar.io
 
     for (const player of this.players.values()) {
+      // ANTI-CHEAT: Track mass before and after for validation
+      const massBefore = player.blobs.reduce((sum, b) => sum + b.mass, 0);
+      
       // Update merge eligibility for all blobs (each blob tracked individually)
       for (const blob of player.blobs) {
         const timeSinceSplit = now - blob.splitTime;
@@ -362,8 +365,13 @@ export class GameRoom {
         }
       }
 
+      // ANTI-CHEAT: Only allow ONE merge per player per tick
+      let hasMergedThisTick = false;
+      
       // Check all blob pairs for merging
       for (let i = 0; i < player.blobs.length; i++) {
+        if (hasMergedThisTick) break; // Exit if already merged once
+        
         for (let j = i + 1; j < player.blobs.length; j++) {
           const blob1 = player.blobs[i];
           const blob2 = player.blobs[j];
@@ -382,6 +390,7 @@ export class GameRoom {
             
             if (touching) {
               console.log(`🔄 Merging ${player.name}'s blobs: dist=${Math.floor(dist)}, r1+r2=${Math.floor(r1+r2)}, blob1Time=${Math.floor((now-blob1.splitTime)/1000)}s, blob2Time=${Math.floor((now-blob2.splitTime)/1000)}s`);
+              
               // Merge blob2 into blob1
               const oldMass = blob1.mass;
               blob1.mass += blob2.mass;
@@ -397,12 +406,27 @@ export class GameRoom {
               });
               
               player.blobs.splice(j, 1);
-              j--; // Adjust index after removal
+              
+              hasMergedThisTick = true; // Mark that we've merged
               
               const playerType = player.isBot ? 'Bot' : 'Player';
               console.log(`✅ ${playerType} ${player.name} MERGED: ${Math.floor(oldMass)} + ${Math.floor(blob2.mass)} = ${Math.floor(blob1.mass)} mass (after 30s cooldown)`);
+              
+              break; // Exit inner loop after one merge
             }
           }
+        }
+      }
+      
+      // ANTI-CHEAT: Validate mass conservation
+      const massAfter = player.blobs.reduce((sum, b) => sum + b.mass, 0);
+      if (massAfter > massBefore + 1) { // Allow 1 mass tolerance for floating point
+        console.error(`🚨 ANTI-CHEAT: ${player.name} mass increased from ${Math.floor(massBefore)} to ${Math.floor(massAfter)} during merge - REVERTING`);
+        // This should never happen - mass can only stay same or decrease (when eating pellets elsewhere)
+        // Force correction
+        const excessMass = massAfter - massBefore;
+        if (player.blobs.length > 0) {
+          player.blobs[0].mass = Math.max(10, player.blobs[0].mass - excessMass);
         }
       }
     }
@@ -837,6 +861,15 @@ export class GameRoom {
       return;
     }
 
+    // ANTI-CHEAT: Validate coordinates are within map bounds + buffer
+    const mapSize = config.game.mapWidth;
+    const buffer = mapSize * 0.5;
+    if (targetX < -buffer || targetX > mapSize + buffer || targetY < -buffer || targetY > mapSize + buffer) {
+      console.warn(`⚠️ ANTI-CHEAT: ${player.name} sent out-of-bounds coordinates (${Math.floor(targetX)}, ${Math.floor(targetY)}) - clamping`);
+      targetX = Math.max(-buffer, Math.min(mapSize + buffer, targetX));
+      targetY = Math.max(-buffer, Math.min(mapSize + buffer, targetY));
+    }
+
     player.lastInputTime = Date.now();
 
     // Store target position for continuous movement
@@ -850,8 +883,17 @@ export class GameRoom {
     const player = this.players.get(playerId);
     if (!player || player.blobs.length >= 16) return;
 
-    const newBlobs: Blob[] = [];
     const now = Date.now();
+    
+    // ANTI-CHEAT: Rate limit splits (max once per second per player)
+    const lastSplitTime = player['lastSplitTime'] || 0;
+    if (now - lastSplitTime < 1000) {
+      console.warn(`⚠️ ANTI-CHEAT: ${player.name} split too fast - blocking`);
+      return;
+    }
+    player['lastSplitTime'] = now;
+
+    const newBlobs: Blob[] = [];
 
     for (const blob of player.blobs) {
       if (blob.mass >= 36) { // Minimum mass to split (ensures each piece is at least 18)
@@ -918,6 +960,15 @@ export class GameRoom {
   handlePlayerEject(playerId: string, targetX?: number, targetY?: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+
+    const now = Date.now();
+    
+    // ANTI-CHEAT: Rate limit ejects (max once per 100ms)
+    const lastEjectTime = player['lastEjectTime'] || 0;
+    if (now - lastEjectTime < 100) {
+      return; // Silent block, too fast
+    }
+    player['lastEjectTime'] = now;
 
     for (const blob of player.blobs) {
       if (blob.mass > 20) {
