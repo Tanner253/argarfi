@@ -731,13 +731,13 @@ export class GameRoom {
     this.gameState.spectators.clear();
     
     // Stop the game IMMEDIATELY (clears all state including tick loop)
-    this.stop();
-    
-    // Call lobby manager callback to remove game and reset lobby
+      this.stop();
+      
+      // Call lobby manager callback to remove game and reset lobby
     // This allows a new game to start right away without conflicts
-    if (this.onGameEnd) {
-      this.onGameEnd();
-    }
+      if (this.onGameEnd) {
+        this.onGameEnd();
+      }
   }
 
   /**

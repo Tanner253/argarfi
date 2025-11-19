@@ -97,6 +97,10 @@ export default function GamePage() {
   const [joystickBase, setJoystickBase] = useState({ x: 0, y: 0 }); // Where user first touched
   const [joystickHandle, setJoystickHandle] = useState({ x: 0, y: 0 }); // Current drag position
   const [minimapHidden, setMinimapHidden] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ id: string; username: string; message: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const mousePosRef = useRef({ x: 2500, y: 2500 });
   const mouseScreenPosRef = useRef({ x: 0, y: 0 });
@@ -224,24 +228,30 @@ export default function GamePage() {
 
     socket.on('gameNotFound', () => {
       console.log('Game not found, redirecting to lobby NOW');
+      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
+      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect
       window.location.href = '/';
     });
 
     socket.on('serverShutdown', ({ message }) => {
       console.log('Server shutdown, redirecting to lobby NOW');
+      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
+      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect
       window.location.href = '/';
     });
 
     socket.on('lobbyCancelled', ({ message }) => {
       console.log('Lobby cancelled, redirecting to lobby NOW');
+      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
+      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect
       window.location.href = '/';
     });
@@ -306,6 +316,15 @@ export default function GamePage() {
           type: 'info' 
         });
       }
+    });
+
+    // Global chat messages
+    socket.on('chatMessage', (msg: { username: string; message: string }) => {
+      setChatMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        username: msg.username,
+        message: msg.message
+      }].slice(-50));
     });
 
     // Server tells us when a blob kills another
@@ -457,7 +476,9 @@ export default function GamePage() {
       if (!isWinner) {
         console.log('Auto-redirecting non-winner to lobby after 10 seconds');
       autoRedirectTimerRef.current = setTimeout(() => {
+        const savedName = localStorage.getItem('playerName');
         localStorage.clear();
+        if (savedName) localStorage.setItem('playerName', savedName);
         window.location.href = '/';
       }, 10000);
       } else {
@@ -474,9 +495,10 @@ export default function GamePage() {
         console.log('Spectate failed, staying on page to show error');
         return;
       }
-      
+      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
+      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect for non-spectator errors
       window.location.href = '/';
     });
@@ -506,6 +528,11 @@ export default function GamePage() {
       return () => clearTimeout(timer);
     }
   }, [toastMessage]);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
 
   // SPECTATOR CAMERA LOCK - Smoothly interpolates to follow spectated player
   useEffect(() => {
@@ -928,12 +955,17 @@ export default function GamePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Handle back button / ESC to leave lobby - MUST BE BEFORE EARLY RETURNS
+  // Handle back button / ESC to leave lobby or close chat - MUST BE BEFORE EARLY RETURNS
   useEffect(() => {
     if (!gameStarted) {
       const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Backspace' || e.key === 'Escape') {
-          // Leave lobby properly
+        if (e.key === 'Escape') {
+          if (showChat) {
+            setShowChat(false);
+          } else {
+            leaveLobby();
+          }
+        } else if (e.key === 'Backspace' && !showChat) {
           leaveLobby();
         }
       };
@@ -941,13 +973,14 @@ export default function GamePage() {
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
-  }, [gameStarted, router]);
+  }, [gameStarted, showChat, router]);
 
   // Function to leave lobby - MUST BE BEFORE EARLY RETURNS
   const leaveLobby = () => {
     console.log('👋 Leaving lobby, emitting playerLeaveLobby event');
     
     const playerId = localStorage.getItem('playerId');
+    const savedName = localStorage.getItem('playerName'); // Preserve username
     
     if (socketRef.current && playerId) {
       // Notify server we're leaving
@@ -955,17 +988,19 @@ export default function GamePage() {
       
       // Small delay to let server process
       setTimeout(() => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-    }
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
         localStorage.clear();
-    router.push('/');
+        if (savedName) localStorage.setItem('playerName', savedName); // Restore username
+        router.push('/');
       }, 100);
     } else {
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
       localStorage.clear();
+      if (savedName) localStorage.setItem('playerName', savedName); // Restore username
       router.push('/');
     }
   };
@@ -1213,10 +1248,12 @@ export default function GamePage() {
                 autoRedirectTimerRef.current = null;
               }
               
+              const savedName = localStorage.getItem('playerName');
               if (socketRef.current) {
                 socketRef.current.disconnect();
               }
               localStorage.clear();
+              if (savedName) localStorage.setItem('playerName', savedName);
               window.location.href = '/';
             }}
             className="w-full py-4 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green hover:to-neon-blue rounded-lg font-bold text-black transition-all"
@@ -1235,9 +1272,23 @@ export default function GamePage() {
 
   // Show lobby waiting screen if game hasn't started
   if (!gameStarted) {
+    const generateLobbyTweet = () => {
+      const rewardAmount = process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1';
+      const tweetText = `🎮 Join my AgarFi lobby NOW!\n\n` +
+        `💰 Winner gets $${rewardAmount} USDC\n` +
+        `👥 ${lobbyStatus.players}/${lobbyStatus.max} players\n` +
+        `🆓 FREE to play - Real rewards!\n\n` +
+        `Join before it fills up 👇\n` +
+        `https://agarfi.io\n\n` +
+        `@osknyo_dev @agarfi_dev`;
+      
+      const encodedTweet = encodeURIComponent(tweetText);
+      window.open(`https://twitter.com/intent/tweet?text=${encodedTweet}`, '_blank');
+    };
+
     return (
-      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-8">
-        <div className="max-w-md w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-8 text-center">
+      <div className="min-h-screen bg-gradient-to-br from-cyber-darker to-cyber-dark flex items-center justify-center p-4 md:p-8">
+        <div className="max-w-md w-full bg-cyber-dark/50 backdrop-blur-lg border border-neon-green/30 rounded-2xl p-6 md:p-8 text-center">
           <div className="mb-6">
             <div className="text-6xl mb-4">⏳</div>
             <h2 className="text-3xl font-bold text-white mb-2">Waiting for Game</h2>
@@ -1271,10 +1322,24 @@ export default function GamePage() {
           )}
 
           {lobbyStatus.players < 10 && (
-            <div className="bg-neon-blue/20 border border-neon-blue/50 rounded-lg p-4 mb-6">
-              <div className="text-sm text-neon-blue">
+            <div className="bg-neon-blue/20 border border-neon-blue/50 rounded-lg p-4 mb-4">
+              <div className="text-sm text-neon-blue mb-3">
                 Waiting for {10 - lobbyStatus.players} more player(s)...
               </div>
+              
+              {/* Share on X Button */}
+              <motion.button
+                onClick={generateLobbyTweet}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-lg font-bold text-white transition-all flex items-center justify-center gap-2 shadow-lg"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+                Share on 𝕏 - Get More Players!
+                <span className="text-lg">📢</span>
+              </motion.button>
             </div>
           )}
 
@@ -1290,6 +1355,105 @@ export default function GamePage() {
             <p>Press <kbd className="px-2 py-0.5 bg-gray-700 rounded">ESC</kbd> or <kbd className="px-2 py-0.5 bg-gray-700 rounded">Backspace</kbd> to leave</p>
           </div>
         </div>
+
+        {/* Chat Bubble */}
+        <motion.button
+          onClick={() => setShowChat(true)}
+          className="fixed bottom-4 md:bottom-6 right-4 md:right-6 z-40 w-12 h-12 md:w-14 md:h-14 bg-gradient-to-r from-neon-blue to-neon-purple rounded-full shadow-2xl flex items-center justify-center"
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          animate={{ y: [0, -5, 0] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
+          <svg className="w-6 h-6 md:w-7 md:h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          {chatMessages.length > 0 && (
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">
+              {chatMessages.length > 9 ? '9+' : chatMessages.length}
+            </div>
+          )}
+        </motion.button>
+
+        {/* Chat Modal */}
+        {showChat && (
+          <div 
+            className="fixed inset-0 z-50 flex items-end md:items-end md:justify-end p-2 md:p-4 bg-black/40 backdrop-blur-sm"
+            onClick={() => setShowChat(false)}
+          >
+            <motion.div 
+              className="w-full md:max-w-md bg-cyber-dark/95 backdrop-blur-xl border-2 border-neon-blue/50 rounded-t-2xl md:rounded-2xl shadow-2xl overflow-hidden"
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-gradient-to-r from-neon-blue to-neon-purple px-4 py-3 flex items-center justify-between">
+                <h3 className="text-white font-bold text-base md:text-lg">Global Chat</h3>
+                <button onClick={() => setShowChat(false)} className="text-white/70 hover:text-white transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="h-[350px] overflow-y-auto p-4 space-y-2 bg-cyber-darker/50">
+                {chatMessages.length === 0 ? (
+                  <div className="text-center py-16 text-gray-500 text-sm">
+                    <svg className="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    <p>Be the first to chat!</p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg) => (
+                    <div key={msg.id} className="bg-cyber-dark/50 rounded-lg p-2 border border-neon-blue/20">
+                      <span className="text-neon-green font-bold text-xs">{msg.username}:</span>{' '}
+                      <span className="text-gray-300 text-xs">{msg.message}</span>
+                    </div>
+                  ))
+                )}
+                <div ref={chatEndRef} />
+              </div>
+
+              <div className="p-3 bg-cyber-dark border-t border-neon-blue/30">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && chatInput.trim()) {
+                        if (socketRef.current) {
+                          socketRef.current.emit('chatMessage', {
+                            username: localStorage.getItem('playerName') || 'Anonymous',
+                            message: chatInput.trim()
+                          });
+                        }
+                        setChatInput('');
+                      }
+                    }}
+                    placeholder="Type a message..."
+                    className="flex-1 bg-cyber-darker border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-neon-blue text-sm"
+                  />
+                  <button
+                    onClick={() => {
+                      if (chatInput.trim() && socketRef.current) {
+                        socketRef.current.emit('chatMessage', {
+                          username: localStorage.getItem('playerName') || 'Anonymous',
+                          message: chatInput.trim()
+                        });
+                        setChatInput('');
+                      }
+                    }}
+                    className="px-6 py-3 bg-gradient-to-r from-neon-blue to-neon-purple rounded-lg text-white font-bold hover:opacity-90 transition-opacity text-sm"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1384,18 +1548,22 @@ export default function GamePage() {
                 // Wait for server to process (200ms should be enough)
                 setTimeout(() => {
                   console.log('⏱️ Delay complete, disconnecting socket');
+                  const savedName = localStorage.getItem('playerName');
                   if (socketRef.current) {
                     socketRef.current.disconnect();
                   }
                   localStorage.clear();
+                  if (savedName) localStorage.setItem('playerName', savedName);
                   window.location.href = '/';
                 }, 200);
               } else {
                 console.warn('⚠️ No gameId or socket, disconnecting immediately');
+                const savedName = localStorage.getItem('playerName');
                 if (socketRef.current) {
                   socketRef.current.disconnect();
                 }
                 localStorage.clear();
+                if (savedName) localStorage.setItem('playerName', savedName);
                 window.location.href = '/';
               }
             }}

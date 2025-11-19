@@ -270,7 +270,7 @@ export class LobbyManager {
       setTimeout(() => {
         // Double-check before starting
         if (lobby.status === 'countdown' && !this.games.has(lobby.id)) {
-          this.startGame(lobby);
+        this.startGame(lobby);
         } else {
           console.log(`⚠️ Countdown finished but lobby ${lobby.id} status is ${lobby.status} or game exists - skipping start`);
         }

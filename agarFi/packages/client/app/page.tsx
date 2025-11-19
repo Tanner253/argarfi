@@ -48,7 +48,13 @@ export default function HomePage() {
   const { connected, walletAddress, disconnect, connect } = useWallet();
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
-  const [playerName, setPlayerName] = useState('');
+  const [playerName, setPlayerName] = useState(() => {
+    // Load saved name from localStorage on mount
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('playerName') || '';
+    }
+    return '';
+  });
   const [showRoadmap, setShowRoadmap] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showTransactionLog, setShowTransactionLog] = useState(false);
@@ -278,6 +284,13 @@ export default function HomePage() {
       window.removeEventListener('resize', handleResize);
     };
   }, []);
+
+  // Save playerName to localStorage whenever it changes
+  useEffect(() => {
+    if (playerName.trim()) {
+      localStorage.setItem('playerName', playerName);
+    }
+  }, [playerName]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -548,7 +561,7 @@ export default function HomePage() {
             <div className="max-w-2xl mx-auto mb-3">
               <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl px-4 py-2.5 text-center shadow-lg">
                 <p className="text-sm md:text-base font-bold text-neon-green mb-1 drop-shadow-lg">
-                  🎉 PROMOTIONAL EVENT: Win ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC Per Game! 🎉
+                  🎉 PROMOTIONAL EVENT: Win ${process.env.WINNER_REWARD_USDC} USDC Per Game! 🎉
                 </p>
                 <p className="text-xs text-gray-200 drop-shadow">
                   Connect wallet • Play for FREE • Winners earn real rewards
