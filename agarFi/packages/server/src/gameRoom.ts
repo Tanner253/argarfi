@@ -370,9 +370,7 @@ export class GameRoom {
       let hasMergedThisTick = false;
       
       // Check all blob pairs for merging
-      for (let i = 0; i < player.blobs.length; i++) {
-        if (hasMergedThisTick) break; // Exit if already merged once
-        
+      outerLoop: for (let i = 0; i < player.blobs.length; i++) {
         for (let j = i + 1; j < player.blobs.length; j++) {
           const blob1 = player.blobs[i];
           const blob2 = player.blobs[j];
@@ -390,6 +388,15 @@ export class GameRoom {
             const touching = dist < (r1 + r2);
             
             if (touching) {
+              // ANTI-CHEAT: If already merged this tick, ban them
+              if (hasMergedThisTick) {
+                console.error(`🚨 CHEATER DETECTED: ${player.name} (${player.id}) - Multiple merges in one tick - BANNING`);
+                if (this.onCheatDetected && !player.isBot) {
+                  this.onCheatDetected(player.id, player.name, 'Multiple simultaneous merges (exploit)');
+                }
+                break outerLoop;
+              }
+              
               console.log(`🔄 Merging ${player.name}'s blobs: dist=${Math.floor(dist)}, r1+r2=${Math.floor(r1+r2)}, blob1Time=${Math.floor((now-blob1.splitTime)/1000)}s, blob2Time=${Math.floor((now-blob2.splitTime)/1000)}s`);
               
               // Merge blob2 into blob1
@@ -413,7 +420,7 @@ export class GameRoom {
               const playerType = player.isBot ? 'Bot' : 'Player';
               console.log(`✅ ${playerType} ${player.name} MERGED: ${Math.floor(oldMass)} + ${Math.floor(blob2.mass)} = ${Math.floor(blob1.mass)} mass (after 30s cooldown)`);
               
-              break; // Exit inner loop after one merge
+              break outerLoop; // Exit BOTH loops after one merge
             }
           }
         }
