@@ -538,6 +538,7 @@ export class LobbyManager {
       realPlayerCount,
       botCount,
       maxPlayers: lobby.maxPlayers,
+      minPlayers: config.lobby.minPlayers,
       status: lobby.status,
       countdown,
       spectatorCount,

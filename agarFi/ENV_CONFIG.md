@@ -53,5 +53,9 @@ WINNER_REWARD_USDC=1
 # Leave empty in production to enforce 1 game per IP for everyone
 # For local testing, localhost is auto-allowed
 DEV_IP_WHITELIST=
+
+# Client-side configuration (must have NEXT_PUBLIC_ prefix)
+NEXT_PUBLIC_WINNER_REWARD_USDC=1      # Display amount for winner rewards
+# Note: MIN_PLAYERS is sent from server to client, no NEXT_PUBLIC var needed
 ```
 

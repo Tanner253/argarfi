@@ -80,7 +80,7 @@ export default function GamePage() {
   const [gameId, setGameId] = useState<string>('');
   const [camera, setCamera] = useState({ x: 2500, y: 2500, zoom: 1 });
   const [gameStarted, setGameStarted] = useState(false);
-  const [lobbyStatus, setLobbyStatus] = useState({ players: 1, max: 25, countdown: null as number | null });
+  const [lobbyStatus, setLobbyStatus] = useState({ players: 1, max: 25, min: 10, countdown: null as number | null });
   const [isSpectating, setIsSpectating] = useState(false);
   const [spectatingPlayerId, setSpectatingPlayerId] = useState<string>('');
   const [spectatorCount, setSpectatorCount] = useState(0);
@@ -210,10 +210,10 @@ export default function GamePage() {
       socket.emit('requestLobbyStatus', { lobbyId });
     });
 
-    socket.on('lobbyUpdate', ({ tier, playersLocked, maxPlayers, countdown, status }) => {
+    socket.on('lobbyUpdate', ({ tier, playersLocked, maxPlayers, minPlayers, countdown, status }) => {
       const currentTier = localStorage.getItem('selectedTier');
       if (tier === currentTier) {
-        setLobbyStatus({ players: playersLocked, max: maxPlayers, countdown });
+        setLobbyStatus({ players: playersLocked, max: maxPlayers, min: minPlayers || 10, countdown });
       }
     });
 
@@ -1321,10 +1321,10 @@ export default function GamePage() {
             </div>
           )}
 
-          {lobbyStatus.players < 10 && (
+          {lobbyStatus.players < lobbyStatus.min && (
             <div className="bg-neon-blue/20 border border-neon-blue/50 rounded-lg p-4 mb-4">
               <div className="text-sm text-neon-blue mb-3">
-                Waiting for {10 - lobbyStatus.players} more player(s)...
+                Waiting for {lobbyStatus.min - lobbyStatus.players} more player(s)...
               </div>
               
               {/* Share on X Button */}
