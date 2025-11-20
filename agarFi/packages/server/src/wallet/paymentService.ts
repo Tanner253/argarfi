@@ -204,10 +204,11 @@ export class PaymentService {
   }
 
   /**
-   * Check if platform can pay winners
+   * Check if platform can pay Dream Mode winners (minimum $1)
    */
   async canPayWinners(): Promise<boolean> {
-    return await this.walletManager.hasSufficientFunds();
+    const balance = await this.walletManager.getUSDCBalance();
+    return balance >= 1; // At least $1 for Dream Mode payouts
   }
 
   /**
