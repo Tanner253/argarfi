@@ -398,8 +398,8 @@ export default function GamePage() {
     socket.on('chatMessage', (msg: { username: string; message: string }) => {
       setChatMessages(prev => {
         const newMessages = [...prev, {
-          id: Date.now().toString(),
-          username: msg.username,
+        id: Date.now().toString(),
+        username: msg.username,
           message: msg.message,
           timestamp: Date.now()
         }];
@@ -580,7 +580,7 @@ export default function GamePage() {
     if (showChat) {
       // Use setTimeout to ensure DOM has updated
       setTimeout(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     }
   }, [showChat]);

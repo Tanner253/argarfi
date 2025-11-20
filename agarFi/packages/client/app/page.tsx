@@ -97,8 +97,8 @@ export default function HomePage() {
           if (!rpcUrl) {
             console.error('❌ RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
             if (isMounted) {
-              setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
-              setUsdcBalance(0);
+            setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
+            setUsdcBalance(0);
             }
             return;
           }
@@ -107,12 +107,12 @@ export default function HomePage() {
           const result = await checkUSDCBalance(walletAddress, 0, rpcUrl);
           
           if (isMounted) {
-            setUsdcBalance(result.balance);
+          setUsdcBalance(result.balance);
           }
         } catch (error: any) {
           console.error('❌ Error fetching USDC balance:', error.message || error);
           if (isMounted) {
-            setUsdcBalance(0); // Show 0 instead of null on error
+          setUsdcBalance(0); // Show 0 instead of null on error
           }
         }
       };
@@ -418,7 +418,7 @@ export default function HomePage() {
     if (showChat) {
       // Use setTimeout to ensure DOM has updated
       setTimeout(() => {
-        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     }
   }, [showChat]);

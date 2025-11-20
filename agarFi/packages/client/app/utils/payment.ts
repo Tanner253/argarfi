@@ -66,6 +66,13 @@ export async function payEntryFee(
     console.log('💳 Processing payment...');
     console.log(`   Amount: $${amount} USDC`);
     console.log(`   Wallet: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
+    console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
+    console.log('   Wallet capabilities:', {
+      sendTransaction: !!wallet.sendTransaction,
+      signAndSendTransaction: !!wallet.signAndSendTransaction,
+      signTransaction: !!wallet.signTransaction,
+      signAllTransactions: !!wallet.signAllTransactions
+    });
     
     // Use polling instead of WebSocket (many RPC providers don't support WS)
     const connection = new Connection(rpcUrl, {
@@ -73,6 +80,8 @@ export async function payEntryFee(
       disableRetryOnRateLimit: false,
       confirmTransactionInitialTimeout: 60000, // 60 second timeout
     });
+    
+    console.log('🔧 Building transaction...');
     
     // Get token accounts
     const fromTokenAccount = await getAssociatedTokenAddress(
@@ -85,11 +94,21 @@ export async function payEntryFee(
       PLATFORM_WALLET
     );
     
-    // Create transaction
-    const transaction = new Transaction();
+    console.log(`   From: ${fromTokenAccount.toBase58().slice(0, 8)}...`);
+    console.log(`   To: ${toTokenAccount.toBase58().slice(0, 8)}...`);
     
     // Convert USDC amount to smallest unit (6 decimals)
     const usdcAmount = Math.floor(amount * 1_000_000);
+    console.log(`   Amount: ${usdcAmount} (${amount} USDC)`);
+    
+    // Get recent blockhash BEFORE building transaction
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
+    
+    // Create transaction
+    const transaction = new Transaction();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = wallet.publicKey;
     
     // Add transfer instruction
     transaction.add(
@@ -103,33 +122,44 @@ export async function payEntryFee(
       )
     );
     
-    // Get recent blockhash
-    const { blockhash } = await connection.getLatestBlockhash();
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = wallet.publicKey;
+    console.log('✅ Transaction built successfully');
     
     let signature: string;
     
-    // Mobile wallets prefer signAndSendTransaction (Phantom mobile, etc.)
-    if (wallet.signAndSendTransaction) {
-      console.log('📱 Using signAndSendTransaction (mobile wallet)');
-      const result = await wallet.signAndSendTransaction(transaction);
-      signature = typeof result === 'string' ? result : result.signature;
-    } 
-    // Desktop wallets use signTransaction (Phantom desktop, Solflare, etc.)
-    else if (wallet.signTransaction) {
-      console.log('🖥️  Using signTransaction (desktop wallet)');
-      const signed = await wallet.signTransaction(transaction);
-      signature = await connection.sendRawTransaction(signed.serialize(), {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
-    } 
-    else {
-      return {
-        success: false,
-        error: 'Wallet does not support transaction signing'
-      };
+    // Try different signing methods based on wallet capabilities
+    try {
+      // Method 1: sendTransaction (preferred for mobile - wallet handles everything)
+      if (wallet.sendTransaction) {
+        console.log('📱 Using sendTransaction (wallet handles signing + sending)');
+        signature = await wallet.sendTransaction(transaction, connection);
+        console.log(`✅ Wallet broadcast transaction: ${signature}`);
+      }
+      // Method 2: signAndSendTransaction (some mobile wallets)
+      else if (wallet.signAndSendTransaction) {
+        console.log('📱 Using signAndSendTransaction (mobile wallet)');
+        const result = await wallet.signAndSendTransaction(transaction);
+        signature = typeof result === 'string' ? result : result.signature;
+        console.log(`✅ Wallet broadcast transaction: ${signature}`);
+      } 
+      // Method 3: signTransaction (desktop wallets - manual send)
+      else if (wallet.signTransaction) {
+        console.log('🖥️  Using signTransaction (desktop wallet - manual send)');
+        const signed = await wallet.signTransaction(transaction);
+        signature = await connection.sendRawTransaction(signed.serialize(), {
+          skipPreflight: false,
+          maxRetries: 3,
+        });
+        console.log(`✅ Transaction broadcast: ${signature}`);
+      } 
+      else {
+        return {
+          success: false,
+          error: 'Wallet does not support transaction signing'
+        };
+      }
+    } catch (signError: any) {
+      console.error('❌ Signing/sending failed:', signError);
+      throw signError; // Re-throw to be caught by outer catch
     }
     
     console.log(`✅ Transaction sent! Signature: ${signature}`);
@@ -154,10 +184,24 @@ export async function payEntryFee(
       signature
     };
   } catch (error: any) {
-    console.error('❌ Payment failed:', error.message || error);
+    console.error('❌ Payment failed:', error);
+    
+    // Parse common error messages
+    let userMessage = error.message || 'Payment failed';
+    
+    if (error.message?.includes('User rejected')) {
+      userMessage = 'Payment cancelled by user';
+    } else if (error.message?.includes('Insufficient funds')) {
+      userMessage = 'Insufficient SOL for transaction fee';
+    } else if (error.message?.includes('Missing signature')) {
+      userMessage = 'Wallet signing error. Please try reconnecting your wallet.';
+    } else if (error.message?.includes('Blockhash not found')) {
+      userMessage = 'Network congestion. Please try again.';
+    }
+    
     return {
       success: false,
-      error: error.message || 'Payment failed'
+      error: userMessage
     };
   }
 }

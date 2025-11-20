@@ -362,7 +362,7 @@ app.get('/api/game-modes', (req: any, res: any) => {
 // Transaction log endpoint
 app.get('/api/transactions', async (req: any, res: any) => {
   try {
-    const limit = req.query.limit ? parseInt(req.query.limit) : 50;
+  const limit = req.query.limit ? parseInt(req.query.limit) : 50;
     const transactions = await getRecentTransactions(limit);
     
     // Get stats from database (not from loaded transactions)
