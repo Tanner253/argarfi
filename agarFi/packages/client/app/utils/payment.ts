@@ -55,13 +55,17 @@ export async function payEntryFee(
   rpcUrl: string
 ): Promise<PaymentResult> {
   try {
-    // Check if wallet is connected and has required methods
-    if (!wallet || !wallet.publicKey || !wallet.signTransaction) {
+    // Check if wallet is connected
+    if (!wallet || !wallet.publicKey) {
       return {
         success: false,
-        error: 'Wallet not connected or missing required methods'
+        error: 'Wallet not connected'
       };
     }
+    
+    console.log('💳 Processing payment...');
+    console.log(`   Amount: $${amount} USDC`);
+    console.log(`   Wallet: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
     
     // Use polling instead of WebSocket (many RPC providers don't support WS)
     const connection = new Connection(rpcUrl, {
@@ -104,19 +108,38 @@ export async function payEntryFee(
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = wallet.publicKey;
     
-    // Sign and send transaction
-    const signed = await wallet.signTransaction(transaction);
+    let signature: string;
     
-    const signature = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+    // Mobile wallets prefer signAndSendTransaction (Phantom mobile, etc.)
+    if (wallet.signAndSendTransaction) {
+      console.log('📱 Using signAndSendTransaction (mobile wallet)');
+      const result = await wallet.signAndSendTransaction(transaction);
+      signature = typeof result === 'string' ? result : result.signature;
+    } 
+    // Desktop wallets use signTransaction (Phantom desktop, Solflare, etc.)
+    else if (wallet.signTransaction) {
+      console.log('🖥️  Using signTransaction (desktop wallet)');
+      const signed = await wallet.signTransaction(transaction);
+      signature = await connection.sendRawTransaction(signed.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+    } 
+    else {
+      return {
+        success: false,
+        error: 'Wallet does not support transaction signing'
+      };
+    }
+    
+    console.log(`✅ Transaction sent! Signature: ${signature}`);
     
     // Use polling-based confirmation (no WebSocket)
     const confirmResult = await confirmTransactionPolling(connection, signature, 60);
     
     if (!confirmResult) {
       // Return success with warning - user can verify manually
+      console.warn('⚠️ Confirmation timeout (payment likely succeeded)');
       return {
         success: true,
         signature,
@@ -124,11 +147,14 @@ export async function payEntryFee(
       };
     }
     
+    console.log('✅ Payment confirmed!');
+    
     return {
       success: true,
       signature
     };
   } catch (error: any) {
+    console.error('❌ Payment failed:', error.message || error);
     return {
       success: false,
       error: error.message || 'Payment failed'
