@@ -1351,18 +1351,17 @@ export default function GamePage() {
           <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl p-4 mb-6">
             <div className="text-2xl font-black text-neon-green mb-1">
               💰 Winner Gets ${(() => {
-                if (typeof window === 'undefined') return '1';
+                if (typeof window === 'undefined') return '1.00';
                 const tier = localStorage.getItem('selectedTier');
                 if (tier === 'dream') {
-                  return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1');
+                  return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1').toFixed(2);
                 } else if (tier) {
                   // Calculate 80% of pot (entry fee × REAL players only, bots don't pay!)
                   const entryFee = parseInt(tier);
                   const realPlayers = lobbyStatus.realPlayers || 1;
-                  const potentialWinnings = Math.floor(entryFee * realPlayers * 0.80);
-                  return potentialWinnings;
+                  return (entryFee * realPlayers * 0.80).toFixed(2);
                 }
-                return '1';
+                return '1.00';
               })()} USDC
             </div>
             <div className="text-xs text-gray-400">

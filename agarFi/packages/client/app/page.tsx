@@ -87,6 +87,7 @@ export default function HomePage() {
   // Fetch USDC balance when wallet connects
   useEffect(() => {
     let balanceInterval: NodeJS.Timeout | null = null;
+    let isMounted = true;
     
     if (connected && walletAddress) {
       const fetchBalance = async () => {
@@ -94,15 +95,25 @@ export default function HomePage() {
           const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
           
           if (!rpcUrl) {
-            setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
-            setUsdcBalance(0);
+            console.error('❌ RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
+            if (isMounted) {
+              setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
+              setUsdcBalance(0);
+            }
             return;
           }
           
+          console.log('🔄 Fetching USDC balance for homepage...');
           const result = await checkUSDCBalance(walletAddress, 0, rpcUrl);
-          setUsdcBalance(result.balance);
-        } catch (error) {
-          setUsdcBalance(0); // Show 0 instead of null on error
+          
+          if (isMounted) {
+            setUsdcBalance(result.balance);
+          }
+        } catch (error: any) {
+          console.error('❌ Error fetching USDC balance:', error.message || error);
+          if (isMounted) {
+            setUsdcBalance(0); // Show 0 instead of null on error
+          }
         }
       };
       
@@ -117,6 +128,7 @@ export default function HomePage() {
     }
     
     return () => {
+      isMounted = false;
       if (balanceInterval) {
         clearInterval(balanceInterval);
       }
@@ -141,8 +153,8 @@ export default function HomePage() {
   const CONTRACT_ADDRESS = '6WQxQRguwYVwrHpFkNJsLK2XRnWLuqaLuQ8VBGXupump';
 
   const calculateWinnings = (buyIn: number, maxPlayers: number) => {
-    // 80% of full pot (all players paying)
-    return Math.floor(buyIn * maxPlayers * 0.8);
+    // 80% of full pot (all players paying) - return as number with 2 decimals
+    return Number((buyIn * maxPlayers * 0.8).toFixed(2));
   };
 
   const getActualWinnings = (lobby: LobbyStatus | undefined, tier: string) => {
@@ -151,9 +163,9 @@ export default function HomePage() {
       return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1');
     }
     
-    // For paid tiers, show 80% of current pot
+    // For paid tiers, show 80% of current pot - return as number with 2 decimals
     if (lobby?.potSize) {
-      return Math.floor(lobby.potSize * 0.8);
+      return Number((lobby.potSize * 0.8).toFixed(2));
     }
     
     // Fallback: show potential winnings if pot is full

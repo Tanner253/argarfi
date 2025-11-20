@@ -145,6 +145,10 @@ export async function checkUSDCBalance(
   rpcUrl: string
 ): Promise<{ hasEnough: boolean; balance: number }> {
   try {
+    console.log(`💰 Fetching USDC balance...`);
+    console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
+    console.log(`   Wallet: ${walletAddress.slice(0, 8)}...`);
+    
     // No WebSocket subscriptions (HTTP only)
     const connection = new Connection(rpcUrl, {
       commitment: 'confirmed',
@@ -157,10 +161,15 @@ export async function checkUSDCBalance(
       publicKey
     );
     
+    console.log(`   Token Account: ${tokenAccount.toBase58().slice(0, 8)}...`);
+    
     const tokenBalance = await connection.getTokenAccountBalance(tokenAccount);
     
     // Use uiAmount (number) instead of uiAmountString
     const balance = tokenBalance.value.uiAmount || 0;
+    
+    console.log(`✅ USDC Balance: $${balance.toFixed(2)}`);
+    console.log(`   Raw: ${tokenBalance.value.amount} (${tokenBalance.value.decimals} decimals)`);
     
     return {
       hasEnough: balance >= requiredAmount,
@@ -169,11 +178,17 @@ export async function checkUSDCBalance(
   } catch (error: any) {
     // Check if error is "account not found" (no USDC account = 0 balance)
     if (error.message?.includes('could not find account')) {
+      console.log('ℹ️ No USDC token account found - balance is $0.00');
       return {
         hasEnough: false,
         balance: 0
       };
     }
+    
+    // Log error for debugging in production
+    console.error('❌ Failed to fetch USDC balance:', error.message || error);
+    console.error('   RPC URL:', rpcUrl);
+    console.error('   Wallet:', walletAddress);
     
     // Return 0 balance on other errors
     return {
