@@ -31,11 +31,16 @@ Phase 1 delivers a **fully functional Agar.io clone** with:
 - Configurable minimum players (dev mode: 2)
 - Auto-fill lobbies with bots
 
-❌ **Not Included (Phase 2 & 3)**
-- Wallet authentication (x403)
+✅ **Phase 2 Complete**
 - USDC payments (x402)
-- Token economy
-- Database persistence
+- Token gating (100k $AgarFi)
+- Database persistence (MongoDB)
+- Transaction logging
+
+❌ **Not Yet Implemented (Phase 3)**
+- Wallet authentication (x403)
+- Session-based auth
+- One wallet = one game enforcement
 
 ---
 
@@ -312,37 +317,49 @@ agarFi/
 
 ---
 
-## 🎯 Next Steps
+## 🎯 Development Status
 
-After Phase 1 demo is approved:
+### ✅ Phase 1 (Days 1-2) - COMPLETE
+- Core game mechanics and multiplayer
+- 60fps Canvas + 60Hz server tick
+- All game modes implemented
 
-- **Phase 2**: Add x403 wallet authentication
-- **Phase 3**: Add x402 USDC payments
-- **Phase 3**: Add AGAR token economy
-- **Phase 3**: Deploy to production
+### ✅ Phase 2 (Days 3-4) - COMPLETE
+- **x402 USDC payment integration** ✅
+- Entry fee collection with blockchain verification
+- Automatic pot distribution (80/15/5 split)
+- Refund system for lobby abandonment
+- **$AgarFi token gating** (100k tokens required)
+- MongoDB integration (users, transactions, games)
+- Real-time transaction logging
+- Public leaderboards (top 50 winners)
+
+### 📅 Phase 3 (Days 5-6) - SCHEDULED
+- **x403 wallet authentication**
+- Wallet signature verification (ECDSA)
+- Session management with cryptographic proofs
+- One game per wallet enforcement
+- Anti-farming pattern detection
+
+### 📅 Phase 4 (Day 7) - SCHEDULED
+- End-to-end testing on mainnet
+- Security audits
+- Performance optimization
+- Production deployment
+- **🎉 PUBLIC LAUNCH**
 
 ---
 
-## 📝 Notes
+## 📝 Current Features
 
-- Phase 1 is **free play only** - no real money
-- Perfect for testing game mechanics and balance
-- All 6 tiers work identically (just labeled differently)
-- Stats are fully functional for balancing tie-breakers
-- Whale Mode UI is present but locked
-
----
-
-## 🐛 Known Limitations (Phase 1)
-
-- No authentication (anyone can join)
-- No payment verification
-- No database (stats lost on server restart)
-- Bots are simple (random movement)
-- No persistent leaderboards
-- No replay system
-
-These will be added in Phases 2 & 3.
+- ✅ **Real money gameplay** with USDC
+- ✅ **Token gated** - Must hold 100k $AgarFi
+- ✅ **6 game tiers** ($1, $5, $10, $25, $50, $100)
+- ✅ **Dream Mode** - Free hourly game ($1 USDC prize)
+- ✅ **Instant payouts** - Winners paid on Solana blockchain
+- ✅ **Transaction transparency** - All payouts publicly visible
+- ✅ **Persistent stats** - MongoDB database
+- ✅ **Global chat** - Wallet-gated communication
 
 ---
 

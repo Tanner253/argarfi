@@ -7,7 +7,9 @@ import { useWallet } from './components/useWallet';
 import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import { TransactionLog } from './components/TransactionLog';
 import { Leaderboard } from './components/Leaderboard';
+import { SwapModal } from './components/SwapModal';
 import { payEntryFee, checkUSDCBalance } from './utils/payment';
+import { checkAgarFiTokenBalance } from './lib/tokenGating';
 
 interface GameMode {
   tier: string;
@@ -59,6 +61,10 @@ export default function HomePage() {
   const [payingForTier, setPayingForTier] = useState<string | null>(null);
   const [showCountdownWarning, setShowCountdownWarning] = useState(false);
   const [pendingJoinTier, setPendingJoinTier] = useState<string | null>(null);
+  const [showSwapModal, setShowSwapModal] = useState(false);
+  const [isTokenGated, setIsTokenGated] = useState<boolean>(false);
+  const [agarFiBalance, setAgarFiBalance] = useState<number>(0);
+  const [checkingTokens, setCheckingTokens] = useState<boolean>(false);
 
   // Fetch username from database when wallet connects
   useEffect(() => {
@@ -84,6 +90,60 @@ export default function HomePage() {
     fetchUsername();
   }, [connected, walletAddress]);
 
+  // Check token gating when wallet connects or swap modal closes
+  useEffect(() => {
+    let isMounted = true;
+    
+    if (connected && walletAddress) {
+      const checkTokenGating = async () => {
+        try {
+          setCheckingTokens(true);
+          const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
+          
+          if (!rpcUrl) {
+            console.error('❌ RPC endpoint not configured');
+            if (isMounted) {
+              setIsTokenGated(false);
+              setAgarFiBalance(0);
+            }
+            return;
+          }
+          
+          const result = await checkAgarFiTokenBalance(walletAddress, rpcUrl);
+          
+          if (isMounted) {
+            setIsTokenGated(result.meetsRequirement);
+            setAgarFiBalance(result.total);
+            
+            if (!result.meetsRequirement && !showSwapModal) {
+              setToastMessage(`You need 100,000 $AgarFi to play. You have ${result.total.toLocaleString()}`);
+            }
+          }
+        } catch (error: any) {
+          console.error('❌ Error checking token balance:', error);
+          if (isMounted) {
+            setIsTokenGated(false);
+            setAgarFiBalance(0);
+          }
+        } finally {
+          if (isMounted) {
+            setCheckingTokens(false);
+          }
+        }
+      };
+      
+      checkTokenGating();
+    } else {
+      // Clear token gate status when wallet disconnects
+      setIsTokenGated(false);
+      setAgarFiBalance(0);
+    }
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [connected, walletAddress, showSwapModal]); // Re-check when swap modal closes
+
   // Fetch USDC balance when wallet connects
   useEffect(() => {
     let balanceInterval: NodeJS.Timeout | null = null;
@@ -97,8 +157,8 @@ export default function HomePage() {
           if (!rpcUrl) {
             console.error('❌ RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
             if (isMounted) {
-            setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
-            setUsdcBalance(0);
+              setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
+              setUsdcBalance(0);
             }
             return;
           }
@@ -107,12 +167,12 @@ export default function HomePage() {
           const result = await checkUSDCBalance(walletAddress, 0, rpcUrl);
           
           if (isMounted) {
-          setUsdcBalance(result.balance);
+            setUsdcBalance(result.balance);
           }
         } catch (error: any) {
           console.error('❌ Error fetching USDC balance:', error.message || error);
           if (isMounted) {
-          setUsdcBalance(0); // Show 0 instead of null on error
+            setUsdcBalance(0); // Show 0 instead of null on error
           }
         }
       };
@@ -455,6 +515,41 @@ export default function HomePage() {
       return;
     }
 
+    // Token gating check #1 - Initial cached check
+    if (!isTokenGated) {
+      setToastMessage(`You need 100,000 $AgarFi tokens to play. You have ${agarFiBalance.toLocaleString()}`);
+      return;
+    }
+
+    // Token gating check #2 - Fresh balance check before joining (prevent sell-and-play)
+    console.log('🔒 Re-verifying token balance before joining lobby...');
+    try {
+      const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
+      
+      if (!rpcUrl) {
+        setToastMessage('RPC endpoint not configured');
+        return;
+      }
+
+      const freshCheck = await checkAgarFiTokenBalance(walletAddress!, rpcUrl);
+      
+      // Update cached values
+      setIsTokenGated(freshCheck.meetsRequirement);
+      setAgarFiBalance(freshCheck.total);
+      
+      if (!freshCheck.meetsRequirement) {
+        console.log(`❌ Token balance check failed: ${freshCheck.total.toLocaleString()} < 100,000`);
+        setToastMessage(`Insufficient tokens! You need 100,000 $AgarFi. You have ${freshCheck.total.toLocaleString()}`);
+        return;
+      }
+      
+      console.log(`✅ Token balance verified: ${freshCheck.total.toLocaleString()} $AgarFi`);
+    } catch (error: any) {
+      console.error('❌ Token verification failed:', error);
+      setToastMessage('Failed to verify token balance. Please try again.');
+      return;
+    }
+
     // Check if tier requires payment (all except Dream)
     const gameMode = gameModes.find(m => m.tier === tier);
     const requiresPayment = tier !== 'dream';
@@ -494,6 +589,23 @@ export default function HomePage() {
         setPayingForTier(null);
         return;
       }
+
+      // Token gating check #2 - Fresh balance check before payment (prevent sell-and-play)
+      console.log('🔒 Re-verifying token balance before payment...');
+      const freshCheck = await checkAgarFiTokenBalance(walletAddress!, rpcUrl);
+      
+      // Update cached values
+      setIsTokenGated(freshCheck.meetsRequirement);
+      setAgarFiBalance(freshCheck.total);
+      
+      if (!freshCheck.meetsRequirement) {
+        console.log(`❌ Token balance check failed: ${freshCheck.total.toLocaleString()} < 100,000`);
+        setToastMessage(`Insufficient tokens! You need 100,000 $AgarFi. You have ${freshCheck.total.toLocaleString()}`);
+        setPayingForTier(null);
+        return;
+      }
+      
+      console.log(`✅ Token balance verified: ${freshCheck.total.toLocaleString()} $AgarFi`);
       
       // Check USDC balance
       const balanceCheck = await checkUSDCBalance(walletAddress!, entryFee, rpcUrl);
@@ -987,6 +1099,39 @@ export default function HomePage() {
                     >
                       👁️ Spectate Dream
                     </motion.button>
+                  ) : !connected ? (
+                    <motion.button
+                      className="px-8 md:px-16 py-3 md:py-5 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 hover:from-pink-600 hover:via-purple-600 hover:to-cyan-600 text-white rounded-2xl font-black text-lg md:text-2xl shadow-2xl border-2 border-white/30"
+                      whileHover={{ scale: 1.05, boxShadow: "0 0 40px rgba(236, 72, 153, 0.6)" }}
+                      whileTap={{ scale: 0.95 }}
+                      animate={{
+                        boxShadow: [
+                          "0 0 20px rgba(236, 72, 153, 0.3)",
+                          "0 0 40px rgba(147, 51, 234, 0.4)",
+                          "0 0 20px rgba(236, 72, 153, 0.3)"
+                        ]
+                      }}
+                      transition={{ duration: 3, repeat: Infinity }}
+                      onClick={connect}
+                    >
+                      🔗 Connect Wallet
+                    </motion.button>
+                  ) : !isTokenGated ? (
+                    <div className="text-center space-y-3">
+                      <div className="px-8 py-5 bg-red-500/20 border-2 border-red-500/50 text-red-400 rounded-2xl font-bold text-lg">
+                        🔒 Need 100k $AgarFi to Play
+                      </div>
+                      <p className="text-sm text-white/70">You have {agarFiBalance.toLocaleString()} $AgarFi</p>
+                      <motion.button
+                        onClick={() => setShowSwapModal(true)}
+                        className="px-8 py-3 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green/80 hover:to-neon-blue/80 text-black rounded-xl font-bold text-base"
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        💰 Buy $AgarFi Tokens
+                      </motion.button>
+                      <p className="text-xs text-white/50 mt-2">You can still spectate games!</p>
+                    </div>
                   ) : (
                     <motion.button
                       className="px-8 md:px-16 py-3 md:py-5 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 hover:from-pink-600 hover:via-purple-600 hover:to-cyan-600 text-white rounded-2xl font-black text-lg md:text-2xl shadow-2xl border-2 border-white/30"
@@ -1001,10 +1146,6 @@ export default function HomePage() {
                       }}
                       transition={{ duration: 3, repeat: Infinity }}
                       onClick={() => {
-                        if (!connected) {
-                          setToastMessage('Connect wallet to play');
-                          return;
-                        }
                         if (!playerName.trim()) {
                           setToastMessage('Enter your name to play');
                           return;
@@ -1268,6 +1409,20 @@ export default function HomePage() {
                       >
                         👁️ Spectate
                       </motion.button>
+                    ) : !isTokenGated ? (
+                      <div className="space-y-2">
+                        <div className="w-full py-2 rounded-xl font-bold text-xs md:text-sm bg-red-500/20 border border-red-500/50 text-red-400 text-center">
+                          🔒 Need 100k $AgarFi
+                        </div>
+                        <motion.button
+                          onClick={() => setShowSwapModal(true)}
+                          className="w-full py-2 rounded-xl font-bold text-xs md:text-sm bg-gradient-to-r from-neon-green to-neon-blue text-black hover:opacity-90 transition-all"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          💰 Buy Tokens
+                        </motion.button>
+                      </div>
                     ) : (
                       <motion.button
                         whileHover={{ scale: payingForTier === mode.tier ? 1 : 1.03 }}
@@ -1578,44 +1733,53 @@ export default function HomePage() {
                 initial={{ opacity: 0, x: -30 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.2 }}
-                className="relative pl-8 border-l-4 border-neon-blue"
+                className="relative pl-8 border-l-4 border-neon-green"
               >
-                <div className="absolute -left-3 top-0 w-6 h-6 bg-neon-blue rounded-full animate-pulse" />
-                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-blue/30 hover:border-neon-blue transition-all">
+                <div className="absolute -left-3 top-0 w-6 h-6 bg-neon-green rounded-full animate-pulse" />
+                <div className="bg-cyber-dark/70 backdrop-blur-lg rounded-xl p-6 border border-neon-green/30 hover:border-neon-green transition-all">
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
                     <div>
-                      <h3 className="text-2xl font-bold text-neon-blue mb-2">Days 3-4</h3>
-                      <p className="text-xl text-gray-300">x403 Authentication & Anti-Bot</p>
+                      <h3 className="text-2xl font-bold text-neon-green mb-2">Days 3-4</h3>
+                      <p className="text-xl text-gray-300">Payments & Token Economy (x402)</p>
                     </div>
                     <div className="mt-3 md:mt-0 text-right">
                       <p className="text-sm text-gray-400">48 Hours</p>
-                      <span className="inline-block px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs font-bold mt-1">
-                        ⚡ IN PROGRESS
+                      <span className="inline-block px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-bold mt-1">
+                        ✓ COMPLETE
                       </span>
                     </div>
                   </div>
-                  
-                  {/* x403 Explainer */}
-                  <div className="bg-neon-blue/10 border border-neon-blue/30 rounded-lg p-4 mb-4">
-                    <p className="text-sm font-bold text-neon-blue mb-2">🔥 Revolutionary x403 Protocol:</p>
+
+                  {/* x402 Explainer */}
+                  <div className="bg-gradient-to-r from-neon-green/10 to-neon-blue/10 border border-neon-green/30 rounded-lg p-4 mb-3">
+                    <p className="text-sm font-bold text-neon-green mb-2">💰 x402 Payment Protocol:</p>
                     <p className="text-xs text-gray-300">
-                      ECDSA signature verification proves wallet ownership WITHOUT passwords or email. 
-                      Bot-resistant, zero PII, one wallet = one concurrent game. Web3 authentication done RIGHT.
+                      Programmatic crypto payments over HTTP using status code 402. No accounts, no sessions, no KYC. 
+                      Pure frictionless USDC payments via SPL tokens on Solana.
+                    </p>
+                  </div>
+
+                  {/* Winning Potential */}
+                  <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
+                    <p className="text-lg font-black text-yellow-400 mb-2">💎 Win 20x Your Bet!</p>
+                    <p className="text-xs text-gray-300">
+                      Bet $5, win $100. Bet $100, win $2,000. Winner takes 80% of pot. 
+                      Pure skill-based gameplay with deterministic physics. No RNG, no luck.
                     </p>
                   </div>
 
                   <ul className="space-y-2 text-gray-300 text-sm">
                     {[
-                      'x403 protocol integration (trending Web3 auth)',
-                      'Wallet signature verification flow',
-                      'User profiles with stats tracking',
-                      'Real-time leaderboards (top players)',
-                      'One game per wallet enforcement',
-                      '35-minute session caching',
-                      'Anti-farming pattern detection'
+                      'Solana USDC payment integration (SPL tokens)',
+                      'Entry fee collection with automatic refunds',
+                      'Server-managed prize pools with instant payouts',
+                      '80/15/5 pot distribution (winner/platform/burn)',
+                      '$AgarFi token gating (100k tokens required)',
+                      'Public transaction dashboards',
+                      'Real-time pot tracking and transparency'
                     ].map((item, i) => (
                       <li key={i} className="flex items-start gap-2">
-                        <span className="text-neon-blue mt-0.5">→</span>
+                        <span className="text-neon-green mt-0.5">✓</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -1635,7 +1799,7 @@ export default function HomePage() {
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4">
                     <div>
                       <h3 className="text-2xl font-bold text-neon-purple mb-2">Days 5-6</h3>
-                      <p className="text-xl text-gray-300">Payments & Token Economy</p>
+                      <p className="text-xl text-gray-300">x403 Authentication & Anti-Bot</p>
                     </div>
                     <div className="mt-3 md:mt-0 text-right">
                       <p className="text-sm text-gray-400">48 Hours</p>
@@ -1644,34 +1808,25 @@ export default function HomePage() {
                       </span>
                     </div>
                   </div>
-
-                  {/* x402 Explainer */}
-                  <div className="bg-gradient-to-r from-neon-purple/10 to-neon-pink/10 border border-neon-purple/30 rounded-lg p-4 mb-3">
-                    <p className="text-sm font-bold text-neon-purple mb-2">💰 x402 Payment Protocol:</p>
+                  
+                  {/* x403 Explainer */}
+                  <div className="bg-neon-purple/10 border border-neon-purple/30 rounded-lg p-4 mb-4">
+                    <p className="text-sm font-bold text-neon-purple mb-2">🔥 Revolutionary x403 Protocol:</p>
                     <p className="text-xs text-gray-300">
-                      Programmatic crypto payments over HTTP using status code 402. No accounts, no sessions, no KYC. 
-                      Pure frictionless USDC payments via SPL tokens on Solana.
-                    </p>
-                  </div>
-
-                  {/* Winning Potential */}
-                  <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
-                    <p className="text-lg font-black text-yellow-400 mb-2">💎 Win 20x Your Bet!</p>
-                    <p className="text-xs text-gray-300">
-                      Bet $5, win $100. Bet $100, win $2,000. Winner takes 80% of pot. 
-                      Pure skill-based gameplay with deterministic physics. No RNG, no luck.
+                      ECDSA signature verification proves wallet ownership WITHOUT passwords or email. 
+                      Bot-resistant, zero PII, one wallet = one concurrent game. Web3 authentication done RIGHT.
                     </p>
                   </div>
 
                   <ul className="space-y-2 text-gray-300 text-sm">
                     {[
-                      'Solana USDC payment integration (SPL tokens)',
-                      'x402-inspired payment UX (viral prompts)',
-                      'Server-managed prize pools with instant payouts',
-                      'Automatic AGAR buyback mechanism (Raydium SDK)',
-                      '30-day staking smart contract (Anchor)',
-                      'Public transaction dashboards',
-                      'Real-time pot tracking and transparency'
+                      'x403 protocol integration (trending Web3 auth)',
+                      'Wallet signature verification flow',
+                      'Session management with cryptographic proofs',
+                      'One game per wallet enforcement',
+                      '35-minute session caching',
+                      'Anti-farming pattern detection',
+                      'Secure nonce-based challenge-response'
                     ].map((item, i) => (
                       <li key={i} className="flex items-start gap-2">
                         <span className="text-neon-purple mt-0.5">→</span>
@@ -1792,6 +1947,14 @@ export default function HomePage() {
       <TransactionLog
         isOpen={showTransactionLog}
         onClose={() => setShowTransactionLog(false)}
+      />
+
+      {/* Swap Modal */}
+      <SwapModal
+        isOpen={showSwapModal}
+        onClose={() => setShowSwapModal(false)}
+        currentBalance={agarFiBalance}
+        requiredBalance={100000}
       />
 
       {/* Leaderboard Modal */}

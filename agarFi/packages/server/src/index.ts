@@ -36,7 +36,10 @@ const playerWallets = new Map<string, string>();
 // Map to track which lobby each player is in (for cleanup on disconnect)
 const playerToLobby = new Map<string, string>(); // playerId -> lobbyId
 
-// Anti-farming: Track active players by IP address
+// Anti-farming: Track active connections by IP address
+const activeConnectionsByIP = new Map<string, string>(); // IP -> socketId (only 1 connection per IP)
+
+// Anti-farming: Track active players by IP address (legacy - kept for tracking)
 const activePlayersByIP = new Map<string, Set<string>>(); // IP -> Set of playerIds
 
 // Anti-cheat: Banned IPs (loaded from file for persistence)
@@ -620,7 +623,43 @@ io.on('connection', (socket) => {
     return;
   }
   
-  console.log(`🔌 NEW CONNECTION: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
+  // Check if IP is whitelisted (dev/localhost)
+  const isWhitelisted = DEV_IP_WHITELIST.includes(fullIP);
+  
+  // Block multiple connections from same IP (except whitelisted)
+  if (!isWhitelisted && fullIP !== 'unknown') {
+    const existingConnection = activeConnectionsByIP.get(fullIP);
+    
+    if (existingConnection) {
+      // Check if existing connection is still alive
+      const existingSocket = io.sockets.sockets.get(existingConnection);
+      
+      if (existingSocket && existingSocket.connected) {
+        console.log(`🚫 MULTIPLE CONNECTION BLOCKED: ${clientIP}`);
+        console.log(`   Existing connection: ${existingConnection}`);
+        console.log(`   New connection: ${socket.id}`);
+        socket.emit('error', { 
+          message: 'Multiple connections from the same network are not allowed. Please close other tabs.', 
+          code: 429 
+        });
+        socket.disconnect();
+        connectedClients--;
+        return;
+      } else {
+        // Existing connection is dead, clean it up
+        console.log(`🧹 Cleaning up dead connection from ${clientIP}`);
+        activeConnectionsByIP.delete(fullIP);
+      }
+    }
+    
+    // Track this connection
+    activeConnectionsByIP.set(fullIP, socket.id);
+    console.log(`🔌 NEW CONNECTION: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
+    console.log(`   IP tracked: ${maskIP(fullIP)} → ${socket.id}`);
+  } else {
+    console.log(`🔌 NEW CONNECTION: ${socket.id} from ${clientIP} (Total: ${connectedClients}) ${isWhitelisted ? '[WHITELISTED]' : ''}`);
+  }
+  
   broadcastStats();
 
   // Player reconnects to existing game
@@ -953,7 +992,18 @@ io.on('connection', (socket) => {
   socket.on('disconnect', async () => {
     connectedClients--;
     const clientIP = maskIP(getClientIP(socket));
+    const fullIP = getClientIP(socket);
+    
     console.log(`🔌 DISCONNECT: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
+    
+    // Remove from connection tracking
+    if (fullIP !== 'unknown') {
+      const trackedSocket = activeConnectionsByIP.get(fullIP);
+      if (trackedSocket === socket.id) {
+        activeConnectionsByIP.delete(fullIP);
+        console.log(`   IP connection freed: ${maskIP(fullIP)}`);
+      }
+    }
     
     // Find and remove player from lobby if they were in one
     let playerIdToRemove: string | null = null;

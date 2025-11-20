@@ -146,9 +146,9 @@ export async function payEntryFee(
         console.log('🖥️  Using signTransaction (desktop wallet - manual send)');
         const signed = await wallet.signTransaction(transaction);
         signature = await connection.sendRawTransaction(signed.serialize(), {
-          skipPreflight: false,
-          maxRetries: 3,
-        });
+      skipPreflight: false,
+      maxRetries: 3,
+    });
         console.log(`✅ Transaction broadcast: ${signature}`);
       } 
       else {
