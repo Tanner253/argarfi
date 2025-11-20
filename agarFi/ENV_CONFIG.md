@@ -11,7 +11,6 @@ Create a `.env` file in the root `agarFi/` directory with these variables:
 NEXT_PUBLIC_SOCKET_URL=http://localhost:3001
 NEXT_PUBLIC_TARGET_FPS=60
 NEXT_PUBLIC_SOLANA_RPC=https://api.mainnet-beta.solana.com
-NEXT_PUBLIC_WINNER_REWARD_USDC=1
 NEXT_PUBLIC_DREAM_PAYOUT=1
 NEXT_PUBLIC_DREAM_MAX_PLAYERS=25
 NEXT_PUBLIC_DREAM_INTERVAL_HOURS=1

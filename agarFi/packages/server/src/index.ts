@@ -85,8 +85,7 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
     walletManager = new WalletManager(
       process.env.SOLANA_RPC_URL,
       process.env.PLATFORM_WALLET_PRIVATE_KEY,
-      process.env.USDC_MINT_ADDRESS || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-      parseFloat(process.env.WINNER_REWARD_USDC || '1')
+      process.env.USDC_MINT_ADDRESS || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
     );
     paymentService = new PaymentService(walletManager);
     entryFeeService = new EntryFeeService(walletManager);
@@ -94,7 +93,7 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
     
     console.log('💰 Payment services initialized');
     console.log(`   Platform wallet: ${walletManager.getPlatformAddress()}`);
-    console.log(`   Winner reward: ${walletManager.getRewardAmount()} USDC`);
+    console.log(`   Dream Mode payout: ${config.dream.payoutUSDC} USDC (from DREAM_PAYOUT_USDC)`);
     console.log(`   Entry fee collection: ✅ Enabled`);
     console.log(`   Pot distribution: 80/15/5 split`);
     
@@ -144,7 +143,8 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
           walletAddress,
           sessionId,
           tier,
-          playersCount
+          playersCount,
+          config.dream.payoutUSDC
         );
         
         if (result.success) {
@@ -155,7 +155,7 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
           console.log(`║ Winner:        ${winnerName.padEnd(44)} ║`);
           console.log(`║ Wallet:        ${walletAddress.substring(0, 44).padEnd(44)} ║`);
           console.log('╠════════════════════════════════════════════════════════════╣');
-          console.log(`║ 🎁 REWARD:      $${walletManager!.getRewardAmount().toFixed(2).padStart(42)} ║`);
+          console.log(`║ 🎁 REWARD:      $${config.dream.payoutUSDC.toFixed(2).padStart(42)} ║`);
           console.log(`║ TX:            ${result.txSignature!.substring(0, 44).padEnd(44)} ║`);
           console.log('╠════════════════════════════════════════════════════════════╣');
           console.log('║ Type:          DREAM MODE (Platform Funded - 100%)         ║');
@@ -171,17 +171,17 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
           if (winnerSocket) {
             winnerSocket.emit('payoutReceived', {
               gameId: sessionId,
-              amount: walletManager!.getRewardAmount(),
+              amount: config.dream.payoutUSDC,
               txSignature: result.txSignature
             });
-            console.log(`📤 Dream payout info sent to winner: $${walletManager!.getRewardAmount()}`);
+            console.log(`📤 Dream payout info sent to winner: $${config.dream.payoutUSDC}`);
           } else {
             io.to(gameId).emit('payoutReceived', {
               gameId: sessionId,
-              amount: walletManager!.getRewardAmount(),
+              amount: config.dream.payoutUSDC,
               txSignature: result.txSignature
             });
-            console.log(`📤 Dream payout info broadcasted: $${walletManager!.getRewardAmount()}`);
+            console.log(`📤 Dream payout info broadcasted: $${config.dream.payoutUSDC}`);
           }
         } else {
           console.error(`\n❌ Failed to pay Dream Mode winner ${winnerName}: ${result.error}\n`);

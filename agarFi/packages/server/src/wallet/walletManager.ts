@@ -41,13 +41,11 @@ export class WalletManager {
   private connection: Connection;
   private platformWallet: Keypair;
   private usdcMint: PublicKey;
-  private winnerRewardAmount: number;
 
   constructor(
     rpcUrl: string,
     privateKeyBase58: string,
-    usdcMintAddress: string,
-    winnerRewardUSDC: number
+    usdcMintAddress: string
   ) {
     this.connection = new Connection(rpcUrl, 'confirmed');
     
@@ -61,7 +59,6 @@ export class WalletManager {
     }
 
     this.usdcMint = new PublicKey(usdcMintAddress);
-    this.winnerRewardAmount = winnerRewardUSDC;
   }
 
   /**
@@ -92,11 +89,11 @@ export class WalletManager {
   }
 
   /**
-   * Check if platform has enough USDC for payouts
+   * Check if platform has enough USDC for a specific payout amount
    */
-  async hasSufficientFunds(): Promise<boolean> {
+  async hasSufficientFunds(amount: number): Promise<boolean> {
     const balance = await this.getUSDCBalance();
-    return balance >= this.winnerRewardAmount;
+    return balance >= amount;
   }
 
   /**
@@ -226,13 +223,6 @@ export class WalletManager {
       console.error('Error transferring USDC:', error);
       throw new Error(`Failed to transfer USDC: ${error.message}`);
     }
-  }
-
-  /**
-   * Get reward amount in USDC
-   */
-  getRewardAmount(): number {
-    return this.winnerRewardAmount;
   }
 
   /**

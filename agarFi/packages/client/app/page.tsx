@@ -160,7 +160,7 @@ export default function HomePage() {
   const getActualWinnings = (lobby: LobbyStatus | undefined, tier: string) => {
     // For Dream Mode, return fixed amount from env
     if (tier === 'dream') {
-      return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1');
+      return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1');
     }
     
     // For paid tiers, show 80% of current pot - return as number with 2 decimals

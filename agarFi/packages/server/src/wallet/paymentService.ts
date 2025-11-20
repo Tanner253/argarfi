@@ -65,15 +65,16 @@ export class PaymentService {
     walletAddress: string,
     gameId: string,
     tier: string,
-    playersCount: number
+    playersCount: number,
+    amount: number
   ): Promise<PayoutResult> {
     const txId = `tx_${Date.now()}`;
-    const amount = this.walletManager.getRewardAmount();
 
-    console.log(`💰 Processing payout for ${winnerName} (${walletAddress})`);
+    console.log(`💰 Processing Dream Mode payout for ${winnerName} (${walletAddress})`);
+    console.log(`   Amount: $${amount} USDC`);
 
     // Check if platform has sufficient funds
-    const hasFunds = await this.walletManager.hasSufficientFunds();
+    const hasFunds = await this.walletManager.hasSufficientFunds(amount);
     if (!hasFunds) {
       const error = 'Insufficient platform funds';
       console.error(`❌ ${error}`);

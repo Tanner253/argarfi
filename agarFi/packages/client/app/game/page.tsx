@@ -1325,11 +1325,23 @@ export default function GamePage() {
   // Show lobby waiting screen if game hasn't started
   if (!gameStarted) {
     const generateLobbyTweet = () => {
-      const rewardAmount = process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1';
+      // Calculate actual winner amount based on tier
+      let rewardAmount = '1';
+      if (typeof window !== 'undefined') {
+        const tier = localStorage.getItem('selectedTier');
+        if (tier === 'dream') {
+          rewardAmount = process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1';
+        } else if (tier) {
+          const entryFee = parseInt(tier);
+          const realPlayers = lobbyStatus.realPlayers || 1;
+          rewardAmount = (entryFee * realPlayers * 0.80).toFixed(2);
+        }
+      }
+      
       const tweetText = `🎮 Join my AgarFi lobby NOW!\n\n` +
         `💰 Winner gets $${rewardAmount} USDC\n` +
         `👥 ${lobbyStatus.players}/${lobbyStatus.max} players\n` +
-        `🆓 FREE to play - Real rewards!\n\n` +
+        `🔥 Compete for real prizes!\n\n` +
         `Join before it fills up 👇\n` +
         `https://agarfi.io\n\n` +
         `@osknyo_dev @agarfi_dev`;
