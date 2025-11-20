@@ -9,8 +9,11 @@ export class LobbyManager {
   private games: Map<string, GameRoom>;
   private io: Server;
   private botManager: BotManager;
-  private onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>;
+  private onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, sessionId: string, tier: string, playersCount: number) => Promise<void>;
   private onLobbyReset?: (playerIds: string[]) => void;
+  private dreamLastGameEnd: number = 0; // Track when last Dream game ended
+  private entryFeeService?: any; // Reference to entry fee service for pot calculation
+  private isInitialized: boolean = false; // Track if DB data is loaded
 
   constructor(io: Server) {
     this.lobbies = new Map();
@@ -20,12 +23,102 @@ export class LobbyManager {
 
     // Initialize lobbies for each game mode
     this.initializeLobbies();
+    
+    // Load Dream timer from DB (async, but constructor can't await)
+    // This will load in the background before first join attempt
+    this.loadDreamTimer().catch(err => {
+      console.error('Failed to load Dream timer:', err);
+    });
+  }
+  
+  /**
+   * Initialize the LobbyManager (call this after construction to ensure DB is loaded)
+   */
+  async initialize(): Promise<void> {
+    // Load Dream timer from database before accepting players
+    await this.loadDreamTimer();
+    this.isInitialized = true;
+    console.log('✅ LobbyManager initialized - ready to accept players');
+    
+    // Log Dream Mode availability status
+    if (this.isDreamOnCooldown()) {
+      const remainingMs = this.getDreamCooldownRemaining();
+      const remainingMins = Math.ceil(remainingMs / (1000 * 60));
+      console.log(`   ☁️  Dream Mode: ON COOLDOWN (${remainingMins} min remaining)`);
+    } else {
+      console.log('   ☁️  Dream Mode: AVAILABLE for players to join');
+    }
+  }
+
+  /**
+   * Load Dream timer from database
+   */
+  private async loadDreamTimer(): Promise<void> {
+    try {
+      // Check if mongoose is connected
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState !== 1) {
+        console.log('⚠️ MongoDB not connected yet - Dream Mode will be HIDDEN until DB loads');
+        console.log('   Players cannot join Dream Mode until database confirms cooldown status');
+        this.dreamLastGameEnd = 0; // Default value (ignored until DB loads)
+        return;
+      }
+
+      const { DreamTimer } = await import('./models/DreamTimer.js');
+      const timer = await (DreamTimer as any).findOne({ id: 'global' });
+      if (timer && timer.lastGameEnd) {
+        this.dreamLastGameEnd = timer.lastGameEnd;
+        const hoursSince = (Date.now() - timer.lastGameEnd) / (1000 * 60 * 60);
+        const minutesRemaining = this.getDreamCooldownRemaining() / (1000 * 60);
+        
+        console.log(`☁️ Dream timer loaded from DB:`);
+        console.log(`   Last game ended: ${new Date(timer.lastGameEnd).toISOString()}`);
+        console.log(`   Time since: ${hoursSince.toFixed(2)} hours ago`);
+        
+        if (this.isDreamOnCooldown()) {
+          console.log(`   Status: ON COOLDOWN (${Math.ceil(minutesRemaining)} min remaining)`);
+        } else {
+          console.log(`   Status: AVAILABLE`);
+        }
+      } else {
+        console.log('☁️ No Dream timer found in DB - First time setup (no previous games)');
+        this.dreamLastGameEnd = 0; // No cooldown for first game ever
+      }
+    } catch (error) {
+      console.error('⚠️ Failed to load Dream timer:', error);
+      console.error('   Dream Mode will be HIDDEN until this is resolved');
+      this.dreamLastGameEnd = 0;
+    }
+  }
+
+  /**
+   * Save Dream timer to database
+   */
+  private async saveDreamTimer(): Promise<void> {
+    try {
+      // Check if mongoose is connected
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState !== 1) {
+        console.warn('⚠️ MongoDB not connected - cannot save Dream timer');
+        return;
+      }
+
+      const { DreamTimer } = await import('./models/DreamTimer.js');
+      await (DreamTimer as any).findOneAndUpdate(
+        { id: 'global' },
+        { lastGameEnd: this.dreamLastGameEnd, updatedAt: new Date() },
+        { upsert: true }
+      );
+      console.log('💾 Dream timer saved to DB');
+    } catch (error) {
+      console.error('❌ Failed to save Dream timer:', error);
+    }
   }
 
   /**
    * Set winner payout callback
    */
-  setWinnerPayoutCallback(callback: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>): void {
+  setWinnerPayoutCallback(callback: (winnerId: string, winnerName: string, gameId: string, sessionId: string, tier: string, playersCount: number) => Promise<void>): void {
     this.onWinnerDetermined = callback;
   }
 
@@ -44,6 +137,145 @@ export class LobbyManager {
   }
 
   /**
+   * Set entry fee service reference (for pot calculation)
+   */
+  setEntryFeeService(service: any): void {
+    this.entryFeeService = service;
+  }
+
+  /**
+   * Add to lobby pot (when player pays entry fee)
+   */
+  addToPot(tier: string, amount: number): void {
+    const lobbyId = `lobby_${tier}`;
+    const lobby = this.lobbies.get(lobbyId);
+    if (lobby) {
+      lobby.potSize = (lobby.potSize || 0) + amount;
+      console.log(`💰 Pot updated for ${tier}: $${lobby.potSize}`);
+      this.broadcastSingleLobbyUpdate(lobby);
+    }
+  }
+
+  /**
+   * Remove from lobby pot (when player gets refund)
+   */
+  removeFromPot(tier: string, amount: number): void {
+    const lobbyId = `lobby_${tier}`;
+    const lobby = this.lobbies.get(lobbyId);
+    if (lobby) {
+      lobby.potSize = Math.max(0, (lobby.potSize || 0) - amount);
+      console.log(`💸 Pot decreased for ${tier}: $${lobby.potSize}`);
+      this.broadcastSingleLobbyUpdate(lobby);
+    }
+  }
+
+  /**
+   * Get current pot size for a lobby
+   */
+  getPotSize(tier: string): number {
+    const lobbyId = `lobby_${tier}`;
+    const lobby = this.lobbies.get(lobbyId);
+    return lobby?.potSize || 0;
+  }
+
+  /**
+   * Create game session record for auditing
+   */
+  private async createGameSession(gameId: string, tier: string, humanPlayers: number, botPlayers: number): Promise<void> {
+    try {
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState !== 1) {
+        return;
+      }
+
+      const { GameSession } = await import('./models/GameSession.js');
+      
+      await (GameSession as any).create({
+        gameId,
+        lobbyId: gameId, // Same as gameId for now
+        tier,
+        startTime: Date.now(),
+        status: 'active',
+        totalPlayers: humanPlayers + botPlayers,
+        humanPlayers,
+        botPlayers,
+      });
+
+      console.log(`📝 Game session logged: ${gameId} (${humanPlayers}H + ${botPlayers}B)`);
+    } catch (error) {
+      console.error('❌ Error creating game session:', error);
+    }
+  }
+
+  /**
+   * Complete game session record
+   */
+  private async completeGameSession(gameId: string, winnerId: string, winnerName: string): Promise<void> {
+    try {
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState !== 1) {
+        return;
+      }
+
+      const { GameSession } = await import('./models/GameSession.js');
+      
+      const session = await (GameSession as any).findOne({ gameId });
+      if (session) {
+        const duration = Date.now() - session.startTime;
+        await (GameSession as any).findOneAndUpdate(
+          { gameId },
+          {
+            endTime: Date.now(),
+            status: 'completed',
+            winnerId,
+            winnerName,
+            duration,
+          }
+        );
+        console.log(`📝 Game session completed: ${gameId} (${(duration / 1000).toFixed(1)}s)`);
+      }
+    } catch (error) {
+      console.error('❌ Error completing game session:', error);
+    }
+  }
+
+  /**
+   * Check for active session and mark as cancelled if server restarted
+   */
+  private async checkForActiveSession(lobbyId: string): Promise<void> {
+    try {
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState !== 1) {
+        return;
+      }
+
+      const { GameSession } = await import('./models/GameSession.js');
+      
+      // Find any active sessions for this lobby
+      const activeSessions = await (GameSession as any).find({
+        lobbyId,
+        status: 'active'
+      });
+
+      if (activeSessions.length > 0) {
+        console.log(`⚠️  Found ${activeSessions.length} orphaned active session(s) for ${lobbyId}`);
+        
+        // Mark them as cancelled (server must have restarted mid-game)
+        for (const session of activeSessions) {
+          await (GameSession as any).findByIdAndUpdate(session._id, {
+            status: 'cancelled',
+            endTime: Date.now(),
+            duration: Date.now() - session.startTime,
+          });
+          console.log(`   Marked ${session.gameId} as cancelled (orphaned)`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error checking active sessions:', error);
+    }
+  }
+
+  /**
    * Initialize lobbies for all game modes
    */
   private initializeLobbies(): void {
@@ -59,6 +291,7 @@ export class LobbyManager {
         countdownStartTime: null,
         gameStartTime: null,
         maxPlayers: mode.maxPlayers,
+        potSize: 0,
       };
 
       this.lobbies.set(lobby.id, lobby);
@@ -69,7 +302,15 @@ export class LobbyManager {
    * Get all lobbies status
    */
   getLobbiesStatus() {
-    return Array.from(this.lobbies.values()).map(lobby => {
+    return Array.from(this.lobbies.values())
+      .filter(lobby => {
+        // Filter out Dream mode if not initialized (DB not loaded yet)
+        if (lobby.tier === 'dream' && !this.isInitialized) {
+          return false;
+        }
+        return true;
+      })
+      .map(lobby => {
       // Get game if playing
       const game = lobby.status === 'playing' ? this.games.get(lobby.id) : null;
       const spectatorCount = game ? game.gameState.spectators.size : lobby.spectators.size;
@@ -124,6 +365,18 @@ export class LobbyManager {
 
     if (!lobby) {
       return { success: false, message: 'Invalid game mode' };
+    }
+
+    // Check if LobbyManager is initialized (DB loaded) for Dream mode
+    if (tier === 'dream' && !this.isInitialized) {
+      return { success: false, message: 'Server is starting up. Please wait a moment and try again.' };
+    }
+
+    // Check Dream tier cooldown
+    if (tier === 'dream' && this.isDreamOnCooldown()) {
+      const remainingMs = this.getDreamCooldownRemaining();
+      const remainingMins = Math.ceil(remainingMs / (1000 * 60));
+      return { success: false, message: `Dream Mode on cooldown. Next game in ${remainingMins} minutes.` };
     }
 
     if (lobby.status === 'playing') {
@@ -263,7 +516,7 @@ export class LobbyManager {
     // In dev mode with MIN_PLAYERS_DEV=1, start immediately
     if (config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
       console.log(`Dev mode: Starting game immediately with ${lobby.players.size} player(s)`);
-      this.startGame(lobby);
+      this.startGame(lobby).catch(err => console.error('Failed to start game:', err));
       return;
     }
 
@@ -274,10 +527,10 @@ export class LobbyManager {
       console.log(`Lobby ${lobby.id} countdown started (${lobby.players.size}/${lobby.maxPlayers})`);
 
       // Start countdown timer
-      setTimeout(() => {
+      setTimeout(async () => {
         // Double-check before starting
         if (lobby.status === 'countdown' && !this.games.has(lobby.id)) {
-        this.startGame(lobby);
+          await this.startGame(lobby);
         } else {
           console.log(`⚠️ Countdown finished but lobby ${lobby.id} status is ${lobby.status} or game exists - skipping start`);
         }
@@ -286,9 +539,30 @@ export class LobbyManager {
   }
 
   /**
+   * Check if Dream tier is on cooldown
+   */
+  private isDreamOnCooldown(): boolean {
+    if (!config.dream.enabled) return false;
+    
+    const hoursSinceLastGame = (Date.now() - this.dreamLastGameEnd) / (1000 * 60 * 60);
+    return hoursSinceLastGame < config.dream.intervalHours;
+  }
+
+  /**
+   * Get time remaining until next Dream game (in milliseconds)
+   */
+  private getDreamCooldownRemaining(): number {
+    if (!this.dreamLastGameEnd) return 0;
+    
+    const cooldownMs = config.dream.intervalHours * 60 * 60 * 1000;
+    const elapsed = Date.now() - this.dreamLastGameEnd;
+    return Math.max(0, cooldownMs - elapsed);
+  }
+
+  /**
    * Start game from lobby
    */
-  private startGame(lobby: Lobby): void {
+  private async startGame(lobby: Lobby): Promise<void> {
     // Check if still have minimum players
     if (lobby.players.size < config.lobby.minPlayers) {
       console.log(`Lobby ${lobby.id} cancelled - insufficient players`);
@@ -298,9 +572,10 @@ export class LobbyManager {
       return;
     }
 
-    // SAFEGUARD: Don't start if a game already exists
+    // SAFEGUARD: Don't start if a game already exists for this lobby
     if (this.games.has(lobby.id)) {
       console.log(`⚠️ Game ${lobby.id} already exists - aborting start`);
+      console.log(`   Only 1 game per tier allowed at a time`);
       return;
     }
     
@@ -309,19 +584,37 @@ export class LobbyManager {
       console.log(`⚠️ Lobby ${lobby.id} status is ${lobby.status} - aborting start`);
       return;
     }
+    
+    // SAFEGUARD: Check database for active session (in case server restarted)
+    await this.checkForActiveSession(lobby.id);
 
     lobby.status = 'playing';
     lobby.gameStartTime = Date.now();
     
     const humanPlayers = Array.from(lobby.players.values()).filter(p => !p.isBot);
     const botPlayers = Array.from(lobby.players.values()).filter(p => p.isBot);
+    
+    // Generate unique session ID for database auditing (lobby ID + timestamp)
+    const sessionId = `${lobby.id}_${Date.now()}`;
+    
+    // Create game session record in database for auditing (use unique sessionId)
+    this.createGameSession(sessionId, lobby.tier, humanPlayers.length, botPlayers.length);
+    
     console.log(`✅ STARTING GAME ${lobby.id}`);
+    console.log(`   Session ID: ${sessionId}`);
     console.log(`   Tier: ${lobby.tier}`);
     console.log(`   Players: ${humanPlayers.length} human, ${botPlayers.length} bots`);
     console.log(`   Human players: ${humanPlayers.map(p => p.name).join(', ')}`);
 
-    // Create game room
+    // Create game room (use lobby.id so safeguards work - only 1 game per tier)
     const game = new GameRoom(lobby.id, lobby.tier, this.io);
+    game.sessionId = sessionId; // Store unique session ID for database
+    
+    // Override game duration for Dream tier
+    if (lobby.tier === 'dream') {
+      game.maxDuration = config.dream.gameDuration;
+      console.log(`   Game duration: ${config.dream.gameDuration / 1000 / 60} minutes`);
+    }
 
     // Add all players to game
     for (const player of lobby.players.values()) {
@@ -362,6 +655,22 @@ export class LobbyManager {
     // Set up game end cleanup - remove game and reset lobby when done
     game.onGameEnd = () => {
       console.log(`🎮 Game ${game.id} ended callback - removing from games map`);
+      
+      // Complete game session record (for auditing)
+      // Note: winnerId/winnerName are set in gameRoom before calling onGameEnd
+      const winnerId = game.lastWinnerId || 'unknown';
+      const winnerName = game.lastWinnerName || 'Unknown';
+      this.completeGameSession(game.sessionId || game.id, winnerId, winnerName);
+      
+      // Track Dream game end time for cooldown and persist to DB
+      if (lobby.tier === 'dream') {
+        this.dreamLastGameEnd = Date.now();
+        this.saveDreamTimer(); // Persist to database
+        const nextAvailable = new Date(this.dreamLastGameEnd + (config.dream.intervalHours * 60 * 60 * 1000));
+        console.log(`☁️ Dream game ended at ${new Date(this.dreamLastGameEnd).toISOString()}`);
+        console.log(`   Next game available at: ${nextAvailable.toISOString()} (in ${config.dream.intervalHours} hour(s))`);
+      }
+      
       this.games.delete(game.id);
       this.resetLobby(lobby);
       this.broadcastSingleLobbyUpdate(lobby);
@@ -381,12 +690,16 @@ export class LobbyManager {
       this.onLobbyReset(playerIds);
     }
     
+    // DON'T clear payments here - they're needed for pot distribution
+    // Payment clearing happens AFTER distribution completes
+    
     // Clear all lobby state
     lobby.players.clear();
     lobby.spectators.clear();
     lobby.status = 'waiting';
     lobby.countdownStartTime = null;
     lobby.gameStartTime = null;
+    lobby.potSize = 0; // Reset pot
     
     // SAFEGUARD: Ensure no game exists for this lobby
     if (this.games.has(lobby.id)) {
@@ -553,6 +866,12 @@ export class LobbyManager {
       }
     }
 
+    // Add Dream cooldown info if applicable
+    let dreamCooldown = null;
+    if (lobby.tier === 'dream') {
+      dreamCooldown = this.getDreamCooldownRemaining();
+    }
+
     const update = {
       tier: lobby.tier,
       playersLocked: realPlayerCount + botCount,
@@ -564,6 +883,8 @@ export class LobbyManager {
       countdown,
       spectatorCount,
       timeRemaining,
+      dreamCooldown, // milliseconds until next Dream game
+      potSize: lobby.potSize || 0, // Current pot in USDC
     };
 
     this.io.emit('lobbyUpdate', update); // Global for homepage
@@ -576,8 +897,14 @@ export class LobbyManager {
   broadcastLobbyUpdates(): void {
     setInterval(() => {
       for (const lobby of this.lobbies.values()) {
-        // Only broadcast if lobby has players or is in countdown
-        if (lobby.players.size > 0 || lobby.status !== 'waiting') {
+        // For Dream mode: only broadcast after initialization (DB data loaded)
+        if (lobby.tier === 'dream') {
+          if (this.isInitialized) {
+            this.broadcastSingleLobbyUpdate(lobby);
+          }
+          // Skip Dream lobby if not initialized yet
+        } else if (lobby.players.size > 0 || lobby.status !== 'waiting') {
+          // Broadcast other lobbies if they have players
           this.broadcastSingleLobbyUpdate(lobby);
         }
       }
@@ -616,6 +943,35 @@ export class LobbyManager {
       count += game.gameState.spectators.size;
     }
     return count;
+  }
+
+  /**
+   * Get highest ranking human player (for bot win scenarios)
+   */
+  getHighestRankingHuman(gameId: string): { playerId: string; playerName: string } | null {
+    const game = this.games.get(gameId);
+    if (!game) {
+      return null;
+    }
+
+    // Find all human players sorted by total mass
+    const humanPlayers = Array.from(game.players.values())
+      .filter(p => !p.isBot)
+      .sort((a, b) => {
+        const massA = a.blobs.reduce((sum, blob) => sum + blob.mass, 0);
+        const massB = b.blobs.reduce((sum, blob) => sum + blob.mass, 0);
+        return massB - massA; // Descending order
+      });
+
+    if (humanPlayers.length === 0) {
+      return null;
+    }
+
+    const topPlayer = humanPlayers[0];
+    return {
+      playerId: topPlayer.id,
+      playerName: topPlayer.name,
+    };
   }
 
   /**

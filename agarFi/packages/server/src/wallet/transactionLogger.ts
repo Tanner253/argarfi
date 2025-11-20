@@ -1,9 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import mongoose from 'mongoose';
 
 export interface Transaction {
   id: string;
@@ -21,92 +16,171 @@ export interface Transaction {
   error?: string;
 }
 
-interface TransactionLog {
-  transactions: Transaction[];
+/**
+ * Log a new transaction to MongoDB
+ */
+export async function logTransaction(transaction: Transaction): Promise<void> {
+  try {
+    // Check if DB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('⚠️ MongoDB not connected - transaction not saved to DB');
+      return;
+    }
+
+    const { Transaction } = await import('../models/Transaction.js');
+    
+    await (Transaction as any).create({
+      id: transaction.id,
+      gameId: transaction.gameId,
+      tier: transaction.tier,
+      winnerId: transaction.winnerId,
+      winnerName: transaction.winnerName,
+      walletAddress: transaction.walletAddress,
+      amountUSDC: transaction.amountUSDC,
+      txSignature: transaction.txSignature,
+      status: transaction.status,
+      timestamp: transaction.timestamp,
+    });
+    
+    console.log(`📝 Transaction logged to DB: ${transaction.id} - ${transaction.status}`);
+  } catch (error) {
+    console.error('❌ Error logging transaction to DB:', error);
+  }
 }
 
-const TRANSACTIONS_FILE = path.join(__dirname, '../../../transactions.json');
+/**
+ * Update transaction status in MongoDB
+ */
+export async function updateTransaction(txId: string, updates: Partial<Transaction>): Promise<void> {
+  try {
+    // Check if DB is connected
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('⚠️ MongoDB not connected - transaction update not saved');
+      return;
+    }
+
+    const { Transaction } = await import('../models/Transaction.js');
+    
+    const updateData: any = {};
+    if (updates.status) updateData.status = updates.status;
+    if (updates.txSignature) updateData.txSignature = updates.txSignature;
+    if (updates.error) updateData.error = updates.error;
+    
+    await (Transaction as any).findOneAndUpdate(
+      { id: txId },
+      updateData,
+      { new: true }
+    );
+    
+    console.log(`📝 Transaction updated in DB: ${txId}`);
+  } catch (error) {
+    console.error('❌ Error updating transaction in DB:', error);
+  }
+}
 
 /**
- * Load transactions from JSON file
+ * Get all transactions from MongoDB
  */
-export function loadTransactions(): Transaction[] {
+export async function getAllTransactions(): Promise<Transaction[]> {
   try {
-    if (!fs.existsSync(TRANSACTIONS_FILE)) {
-      // Create initial file
-      const initialData: TransactionLog = { transactions: [] };
-      fs.writeFileSync(TRANSACTIONS_FILE, JSON.stringify(initialData, null, 2));
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('⚠️ MongoDB not connected - cannot fetch transactions');
       return [];
     }
 
-    const data = fs.readFileSync(TRANSACTIONS_FILE, 'utf-8');
-    const parsed: TransactionLog = JSON.parse(data);
-    return parsed.transactions || [];
+    const { Transaction } = await import('../models/Transaction.js');
+    const transactions = await (Transaction as any).find().sort({ timestamp: -1 }).lean();
+    
+    return transactions.map(tx => ({
+      id: tx.id,
+      timestamp: tx.timestamp,
+      winnerId: tx.winnerId,
+      winnerName: tx.winnerName,
+      walletAddress: tx.walletAddress,
+      amountUSDC: tx.amountUSDC,
+      txSignature: tx.txSignature,
+      gameId: tx.gameId,
+      tier: tx.tier,
+      playersCount: 0, // Not stored in new schema
+      status: tx.status as 'success' | 'failed' | 'pending',
+      retries: 0, // Not stored in new schema
+      error: undefined,
+    }));
   } catch (error) {
-    console.error('Error loading transactions:', error);
+    console.error('❌ Error fetching transactions from DB:', error);
     return [];
   }
 }
 
 /**
- * Save transactions to JSON file
+ * Get recent transactions (limit) from MongoDB
  */
-export function saveTransactions(transactions: Transaction[]): void {
+export async function getRecentTransactions(limit: number = 50): Promise<Transaction[]> {
   try {
-    const data: TransactionLog = { transactions };
-    fs.writeFileSync(TRANSACTIONS_FILE, JSON.stringify(data, null, 2));
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('⚠️ MongoDB not connected - cannot fetch transactions');
+      return [];
+    }
+
+    const { Transaction } = await import('../models/Transaction.js');
+    const transactions = await (Transaction as any).find()
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .lean();
+    
+    return transactions.map(tx => ({
+      id: tx.id,
+      timestamp: tx.timestamp,
+      winnerId: tx.winnerId,
+      winnerName: tx.winnerName,
+      walletAddress: tx.walletAddress,
+      amountUSDC: tx.amountUSDC,
+      txSignature: tx.txSignature,
+      gameId: tx.gameId,
+      tier: tx.tier,
+      playersCount: 0,
+      status: tx.status as 'success' | 'failed' | 'pending',
+      retries: 0,
+      error: undefined,
+    }));
   } catch (error) {
-    console.error('Error saving transactions:', error);
+    console.error('❌ Error fetching recent transactions from DB:', error);
+    return [];
   }
 }
 
 /**
- * Log a new transaction
+ * Get transactions by wallet address from MongoDB
  */
-export function logTransaction(transaction: Transaction): void {
-  const transactions = loadTransactions();
-  transactions.push(transaction);
-  saveTransactions(transactions);
-  
-  console.log(`📝 Transaction logged: ${transaction.id} - ${transaction.status}`);
-}
+export async function getTransactionsByWallet(walletAddress: string): Promise<Transaction[]> {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      console.warn('⚠️ MongoDB not connected - cannot fetch transactions');
+      return [];
+    }
 
-/**
- * Update transaction status
- */
-export function updateTransaction(txId: string, updates: Partial<Transaction>): void {
-  const transactions = loadTransactions();
-  const index = transactions.findIndex(tx => tx.id === txId);
-  
-  if (index !== -1) {
-    transactions[index] = { ...transactions[index], ...updates };
-    saveTransactions(transactions);
-    console.log(`📝 Transaction updated: ${txId}`);
+    const { Transaction } = await import('../models/Transaction.js');
+    const transactions = await (Transaction as any).find({ walletAddress })
+      .sort({ timestamp: -1 })
+      .lean();
+    
+    return transactions.map(tx => ({
+      id: tx.id,
+      timestamp: tx.timestamp,
+      winnerId: tx.winnerId,
+      winnerName: tx.winnerName,
+      walletAddress: tx.walletAddress,
+      amountUSDC: tx.amountUSDC,
+      txSignature: tx.txSignature,
+      gameId: tx.gameId,
+      tier: tx.tier,
+      playersCount: 0,
+      status: tx.status as 'success' | 'failed' | 'pending',
+      retries: 0,
+      error: undefined,
+    }));
+  } catch (error) {
+    console.error('❌ Error fetching transactions by wallet from DB:', error);
+    return [];
   }
 }
-
-/**
- * Get all transactions
- */
-export function getAllTransactions(): Transaction[] {
-  return loadTransactions();
-}
-
-/**
- * Get recent transactions (limit)
- */
-export function getRecentTransactions(limit: number = 50): Transaction[] {
-  const transactions = loadTransactions();
-  return transactions
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, limit);
-}
-
-/**
- * Get transactions by wallet address
- */
-export function getTransactionsByWallet(walletAddress: string): Transaction[] {
-  const transactions = loadTransactions();
-  return transactions.filter(tx => tx.walletAddress === walletAddress);
-}
-

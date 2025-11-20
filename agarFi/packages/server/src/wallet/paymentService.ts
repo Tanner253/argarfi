@@ -29,6 +29,34 @@ export class PaymentService {
   }
 
   /**
+   * Update user stats after successful payout (for leaderboard)
+   */
+  private async updateUserStats(walletAddress: string, username: string, amount: number): Promise<void> {
+    try {
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState !== 1) {
+        console.warn('⚠️ MongoDB not connected - user stats not updated');
+        return;
+      }
+
+      const { User } = await import('../models/User.js');
+      
+      await (User as any).findOneAndUpdate(
+        { walletAddress },
+        { 
+          $inc: { totalWinnings: amount, gamesWon: 1 },
+          $set: { username, lastActive: new Date() }
+        },
+        { upsert: true }
+      );
+      
+      console.log(`📊 User stats updated: ${username} (+$${amount} USDC, +1 win)`);
+    } catch (error) {
+      console.error('❌ Error updating user stats:', error);
+    }
+  }
+
+  /**
    * Send payout to winner with 3-retry logic
    */
   async sendWinnerPayout(
@@ -51,7 +79,7 @@ export class PaymentService {
       console.error(`❌ ${error}`);
       
       // Log failed transaction
-      logTransaction({
+      await logTransaction({
         id: txId,
         timestamp: Date.now(),
         winnerId,
@@ -76,7 +104,7 @@ export class PaymentService {
     }
 
     // Log initial transaction
-    logTransaction({
+    await logTransaction({
       id: txId,
       timestamp: Date.now(),
       winnerId,
@@ -104,7 +132,7 @@ export class PaymentService {
       const errorMsg = `Failed to create USDC account: ${error.message}`;
       console.error(`❌ ${errorMsg}`);
       
-      updateTransaction(txId, {
+      await updateTransaction(txId, {
         status: 'failed',
         error: errorMsg,
       });
@@ -123,16 +151,22 @@ export class PaymentService {
       try {
         console.log(`🔄 Transfer attempt ${attempt + 1}/${MAX_RETRIES}...`);
 
-        const signature = await this.walletManager.transferUSDC(walletAddress, amount);
+        const signature = await this.walletManager.transferUSDC(walletAddress, amount, gameId, tier);
 
         // Success!
         console.log(`✅ Payout successful: ${signature}`);
         
-        updateTransaction(txId, {
+        // Update transaction in DB
+        await updateTransaction(txId, {
           txSignature: signature,
           status: 'success',
           retries: attempt,
         });
+
+        console.log(`📝 Transaction logged: ${txId}`);
+
+        // Update user stats (totalWinnings, gamesWon) for leaderboard
+        await this.updateUserStats(walletAddress, winnerName, amount);
 
         return {
           success: true,
@@ -154,7 +188,7 @@ export class PaymentService {
     // All retries failed
     console.error(`❌ All ${MAX_RETRIES} attempts failed for ${winnerName}`);
     
-    updateTransaction(txId, {
+    await updateTransaction(txId, {
       status: 'failed',
       error: lastError,
       retries: MAX_RETRIES,

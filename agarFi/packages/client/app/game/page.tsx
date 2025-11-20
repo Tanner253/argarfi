@@ -71,6 +71,7 @@ export default function GamePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
 
   const [blobs, setBlobs] = useState<Blob[]>([]);
   const [pellets, setPellets] = useState<Pellet[]>([]);
@@ -80,7 +81,7 @@ export default function GamePage() {
   const [gameId, setGameId] = useState<string>('');
   const [camera, setCamera] = useState({ x: 2500, y: 2500, zoom: 1 });
   const [gameStarted, setGameStarted] = useState(false);
-  const [lobbyStatus, setLobbyStatus] = useState({ players: 1, max: 25, min: 10, countdown: null as number | null });
+  const [lobbyStatus, setLobbyStatus] = useState({ players: 1, realPlayers: 1, max: 25, min: 10, countdown: null as number | null });
   const [isSpectating, setIsSpectating] = useState(false);
   const [spectatingPlayerId, setSpectatingPlayerId] = useState<string>('');
   const [spectatorCount, setSpectatorCount] = useState(0);
@@ -100,7 +101,48 @@ export default function GamePage() {
   const [showChat, setShowChat] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ id: string; username: string; message: string }>>([]);
   const [chatInput, setChatInput] = useState('');
+  const [currentUsername, setCurrentUsername] = useState('');
+
+  // Ensure component only renders on client side
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch username and chat history from DB on mount
+  useEffect(() => {
+    const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+    
+    // Load username
+    const walletAddress = localStorage.getItem('playerWallet');
+    if (walletAddress) {
+      fetch(`${serverUrl}/api/user/${walletAddress}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.user && data.user.username) {
+            setCurrentUsername(data.user.username);
+          }
+        })
+        .catch(console.error);
+    }
+    
+    // Load chat history
+    fetch(`${serverUrl}/api/chat`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.messages && Array.isArray(data.messages)) {
+          // Take last 100 messages
+          const recentMessages = data.messages.slice(-100).map((msg: any) => ({
+            id: msg._id || msg.timestamp?.toString() || Date.now().toString(),
+            username: msg.username,
+            message: msg.message,
+            timestamp: msg.timestamp
+          }));
+          setChatMessages(recentMessages);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const mousePosRef = useRef({ x: 2500, y: 2500 });
   const mouseScreenPosRef = useRef({ x: 0, y: 0 });
@@ -134,7 +176,7 @@ export default function GamePage() {
     const existingGameId = localStorage.getItem('currentGameId');
     const spectateMode = localStorage.getItem('spectateMode');
 
-    console.log('🔍 Game page useEffect - spectateMode:', spectateMode, 'tier:', tier, 'wallet:', walletAddress);
+    // Game page initialization
 
     // DON'T clear spectate flag yet - need it for socket connection
     const isSpectator = spectateMode === 'true';
@@ -181,9 +223,21 @@ export default function GamePage() {
         console.log('Attempting to reconnect to game:', existingGameId);
         socket.emit('playerReconnect', { playerId, gameId: existingGameId });
       } else {
-        // Join lobby (with wallet address for payouts)
-        console.log('Joining lobby for tier:', tier, 'wallet:', walletAddress);
-        socket.emit('playerJoinLobby', { playerId, playerName, tier, walletAddress });
+        // Join lobby (with wallet address for payouts and payment proof)
+        const entryPaymentTx = localStorage.getItem('entryPaymentTx');
+        
+        socket.emit('playerJoinLobby', { 
+          playerId, 
+          playerName, 
+          tier, 
+          walletAddress,
+          txSignature: entryPaymentTx || undefined
+        });
+        
+        // Clear payment tx after sending (one-time use)
+        if (entryPaymentTx) {
+          localStorage.removeItem('entryPaymentTx');
+        }
       }
     });
 
@@ -210,10 +264,38 @@ export default function GamePage() {
       socket.emit('requestLobbyStatus', { lobbyId });
     });
 
-    socket.on('lobbyUpdate', ({ tier, playersLocked, maxPlayers, minPlayers, countdown, status }) => {
+    socket.on('lobbyError', ({ message }) => {
+      alert(`Unable to join: ${message}`);
+      // Redirect back to homepage
+      router.push('/');
+    });
+
+    socket.on('refundProcessed', ({ amount, tx }) => {
+      alert(`✅ Refund processed: $${amount} USDC sent back to your wallet`);
+    });
+
+    socket.on('refundFailed', ({ error }) => {
+      alert(`⚠️ Refund failed: ${error}. Please contact support.`);
+    });
+
+    // Listen for payout transaction signature from server
+    socket.on('payoutReceived', ({ amount, txSignature }) => {
+      setWinnerPayout({
+        amount,
+        txSignature
+      });
+    });
+
+    socket.on('lobbyUpdate', ({ tier, playersLocked, realPlayerCount, maxPlayers, minPlayers, countdown, status }) => {
       const currentTier = localStorage.getItem('selectedTier');
       if (tier === currentTier) {
-        setLobbyStatus({ players: playersLocked, max: maxPlayers, min: minPlayers || 10, countdown });
+        setLobbyStatus({ 
+          players: playersLocked, 
+          realPlayers: realPlayerCount || playersLocked, // Use real player count for calculations
+          max: maxPlayers, 
+          min: minPlayers || 10, 
+          countdown 
+        });
       }
     });
 
@@ -228,30 +310,24 @@ export default function GamePage() {
 
     socket.on('gameNotFound', () => {
       console.log('Game not found, redirecting to lobby NOW');
-      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
-      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect
       window.location.href = '/';
     });
 
     socket.on('serverShutdown', ({ message }) => {
       console.log('Server shutdown, redirecting to lobby NOW');
-      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
-      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect
       window.location.href = '/';
     });
 
     socket.on('lobbyCancelled', ({ message }) => {
       console.log('Lobby cancelled, redirecting to lobby NOW');
-      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
-      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect
       window.location.href = '/';
     });
@@ -320,11 +396,16 @@ export default function GamePage() {
 
     // Global chat messages
     socket.on('chatMessage', (msg: { username: string; message: string }) => {
-      setChatMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        username: msg.username,
-        message: msg.message
-      }].slice(-50));
+      setChatMessages(prev => {
+        const newMessages = [...prev, {
+          id: Date.now().toString(),
+          username: msg.username,
+          message: msg.message,
+          timestamp: Date.now()
+        }];
+        // Keep only the most recent 100 messages
+        return newMessages.slice(-100);
+      });
     });
 
     // Server tells us when a blob kills another
@@ -433,39 +514,11 @@ export default function GamePage() {
     });
 
     socket.on('gameEnd', (result: GameEndResult) => {
-      console.log('Game ended:', result);
       setGameEnd(result);
       
       const isWinner = result.winnerId === playerId;
       
-      // Check if I'm the winner - fetch payout info
-      if (isWinner) {
-        console.log('🏆 I won! Checking for payout transaction...');
-        // Give server a moment to process payout, then fetch transaction
-        setTimeout(async () => {
-          try {
-            const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
-            const response = await fetch(`${serverUrl}/api/transactions?limit=1`);
-            const data = await response.json();
-            
-            if (data.transactions && data.transactions.length > 0) {
-              const latestTx = data.transactions[0];
-              // Check if this transaction is for me
-              const myWallet = localStorage.getItem('playerWallet');
-              if (latestTx.walletAddress === myWallet && latestTx.winnerId === playerId) {
-                setWinnerPayout({
-                  amount: latestTx.amountUSDC,
-                  txSignature: latestTx.txSignature
-                });
-              }
-            }
-          } catch (error) {
-            console.error('Failed to fetch payout info:', error);
-          }
-        }, 3000); // Wait 3 seconds for payout to process
-      }
-      
-      // Don't clear localStorage yet - need it for game end screen
+      // Payout amount will be set via 'payoutReceived' event from server
       
       // Clear any existing timer
       if (autoRedirectTimerRef.current) {
@@ -474,15 +527,10 @@ export default function GamePage() {
       
       // Only auto-redirect NON-winners (losers and spectators)
       if (!isWinner) {
-        console.log('Auto-redirecting non-winner to lobby after 10 seconds');
-      autoRedirectTimerRef.current = setTimeout(() => {
-        const savedName = localStorage.getItem('playerName');
-        localStorage.clear();
-        if (savedName) localStorage.setItem('playerName', savedName);
-        window.location.href = '/';
-      }, 10000);
-      } else {
-        console.log('🏆 Winner - no auto-redirect, let them enjoy the moment!');
+        autoRedirectTimerRef.current = setTimeout(() => {
+          localStorage.clear();
+          window.location.href = '/';
+        }, 10000);
       }
     });
 
@@ -495,10 +543,8 @@ export default function GamePage() {
         console.log('Spectate failed, staying on page to show error');
         return;
       }
-      const savedName = localStorage.getItem('playerName');
       socket.disconnect();
       localStorage.clear();
-      if (savedName) localStorage.setItem('playerName', savedName);
       // Immediate redirect for non-spectator errors
       window.location.href = '/';
     });
@@ -529,10 +575,15 @@ export default function GamePage() {
     }
   }, [toastMessage]);
 
-  // Auto-scroll chat to bottom
+  // Auto-scroll chat to bottom only when opening chat
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+    if (showChat) {
+      // Use setTimeout to ensure DOM has updated
+      setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [showChat]);
 
   // SPECTATOR CAMERA LOCK - Smoothly interpolates to follow spectated player
   useEffect(() => {
@@ -977,10 +1028,12 @@ export default function GamePage() {
 
   // Function to leave lobby - MUST BE BEFORE EARLY RETURNS
   const leaveLobby = () => {
-    console.log('👋 Leaving lobby, emitting playerLeaveLobby event');
+    // Can't leave if countdown started (pot locked)
+    if (lobbyStatus.countdown !== null && lobbyStatus.countdown > 0) {
+      return; // Blocked - no refunds
+    }
     
     const playerId = localStorage.getItem('playerId');
-    const savedName = localStorage.getItem('playerName'); // Preserve username
     
     if (socketRef.current && playerId) {
       // Notify server we're leaving
@@ -988,19 +1041,17 @@ export default function GamePage() {
       
       // Small delay to let server process
       setTimeout(() => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-    }
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
         localStorage.clear();
-        if (savedName) localStorage.setItem('playerName', savedName); // Restore username
-    router.push('/');
+        router.push('/');
       }, 100);
     } else {
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
       localStorage.clear();
-      if (savedName) localStorage.setItem('playerName', savedName); // Restore username
       router.push('/');
     }
   };
@@ -1022,7 +1073,10 @@ export default function GamePage() {
     // Generate share tweet
     const generateTweet = () => {
       const stats = myStats || { pelletsEaten: 0, cellsEaten: 0, maxMass: 0, timeSurvived: 0 };
+      
+      // Use calculated payout amount (already set in gameEnd handler)
       const payoutAmount = winnerPayout?.amount || 1;
+      
       const solscanLink = winnerPayout?.txSignature 
         ? `\nhttps://solscan.io/tx/${winnerPayout.txSignature}`
         : '';
@@ -1248,12 +1302,10 @@ export default function GamePage() {
                 autoRedirectTimerRef.current = null;
               }
               
-              const savedName = localStorage.getItem('playerName');
               if (socketRef.current) {
                 socketRef.current.disconnect();
               }
               localStorage.clear();
-              if (savedName) localStorage.setItem('playerName', savedName);
               window.location.href = '/';
             }}
             className="w-full py-4 bg-gradient-to-r from-neon-green to-neon-blue hover:from-neon-green hover:to-neon-blue rounded-lg font-bold text-black transition-all"
@@ -1298,10 +1350,33 @@ export default function GamePage() {
           {/* Winner Reward Banner */}
           <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl p-4 mb-6">
             <div className="text-2xl font-black text-neon-green mb-1">
-              💰 Winner Gets ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC
+              💰 Winner Gets ${(() => {
+                if (typeof window === 'undefined') return '1';
+                const tier = localStorage.getItem('selectedTier');
+                if (tier === 'dream') {
+                  return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1');
+                } else if (tier) {
+                  // Calculate 80% of pot (entry fee × REAL players only, bots don't pay!)
+                  const entryFee = parseInt(tier);
+                  const realPlayers = lobbyStatus.realPlayers || 1;
+                  const potentialWinnings = Math.floor(entryFee * realPlayers * 0.80);
+                  return potentialWinnings;
+                }
+                return '1';
+              })()} USDC
             </div>
             <div className="text-xs text-gray-400">
-              Automatically sent to your wallet
+              {(() => {
+                if (typeof window === 'undefined') return 'Loading...';
+                const tier = localStorage.getItem('selectedTier');
+                if (tier === 'dream') {
+                  return 'Free hourly game - Winner takes all';
+                } else {
+                  const realPlayers = lobbyStatus.realPlayers || 1;
+                  const botCount = (lobbyStatus.players || 1) - realPlayers;
+                  return `80% of pot (${realPlayers} paid player${realPlayers !== 1 ? 's' : ''}${botCount > 0 ? ` + ${botCount} bot${botCount > 1 ? 's' : ''}` : ''})`;
+                }
+              })()}
             </div>
           </div>
 
@@ -1313,11 +1388,12 @@ export default function GamePage() {
           </div>
 
           {lobbyStatus.countdown !== null && lobbyStatus.countdown > 0 && (
-            <div className="bg-neon-green/20 border border-neon-green/50 rounded-lg p-4 mb-6">
-              <div className="text-2xl font-bold text-neon-green mb-1">
+            <div className="bg-red-500/20 border-2 border-red-500/50 rounded-lg p-4 mb-6">
+              <div className="text-2xl font-bold text-red-400 mb-2">
                 Starting in {lobbyStatus.countdown}s
               </div>
-              <div className="text-sm text-gray-400">Get ready!</div>
+              <div className="text-sm font-bold text-red-300">🔒 POT LOCKED - No Refunds!</div>
+              <div className="text-xs text-gray-400 mt-1">Entry fee is non-refundable</div>
             </div>
           )}
 
@@ -1344,15 +1420,25 @@ export default function GamePage() {
           )}
 
           {/* Leave Lobby Button */}
-          <button
-            onClick={leaveLobby}
-            className="w-full py-3 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400 rounded-xl font-bold transition-all mb-4"
-          >
-            ← Leave Lobby
-          </button>
+          {lobbyStatus.countdown !== null && lobbyStatus.countdown > 0 ? (
+            <div className="w-full py-3 bg-gray-600/50 border border-gray-500/50 text-gray-400 rounded-xl font-bold text-center mb-4 cursor-not-allowed">
+              🔒 Locked - No Refunds
+            </div>
+          ) : (
+            <button
+              onClick={leaveLobby}
+              className="w-full py-3 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400 rounded-xl font-bold transition-all mb-4"
+            >
+              ← Leave Lobby & Get Refund
+            </button>
+          )}
 
-          <div className="text-xs text-gray-500">
-            <p>Press <kbd className="px-2 py-0.5 bg-gray-700 rounded">ESC</kbd> or <kbd className="px-2 py-0.5 bg-gray-700 rounded">Backspace</kbd> to leave</p>
+          <div className="text-xs text-gray-500 text-center">
+            {lobbyStatus.countdown !== null && lobbyStatus.countdown > 0 ? (
+              <p className="text-red-400 font-bold">⚠️ No refunds after countdown starts</p>
+            ) : (
+              <p>Press <kbd className="px-2 py-0.5 bg-gray-700 rounded">ESC</kbd> or <kbd className="px-2 py-0.5 bg-gray-700 rounded">Backspace</kbd> to leave</p>
+            )}
           </div>
         </div>
 
@@ -1423,10 +1509,11 @@ export default function GamePage() {
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && chatInput.trim()) {
-                        if (socketRef.current) {
+                        if (socketRef.current && typeof window !== 'undefined') {
                           socketRef.current.emit('chatMessage', {
-                            username: localStorage.getItem('playerName') || 'Anonymous',
-                            message: chatInput.trim()
+                            username: currentUsername || 'Anonymous',
+                            message: chatInput.trim(),
+                            walletAddress: localStorage.getItem('playerWallet') || null
                           });
                         }
                         setChatInput('');
@@ -1437,10 +1524,11 @@ export default function GamePage() {
                   />
                   <button
                     onClick={() => {
-                      if (chatInput.trim() && socketRef.current) {
+                      if (chatInput.trim() && socketRef.current && typeof window !== 'undefined') {
                         socketRef.current.emit('chatMessage', {
-                          username: localStorage.getItem('playerName') || 'Anonymous',
-                          message: chatInput.trim()
+                          username: currentUsername || 'Anonymous',
+                          message: chatInput.trim(),
+                          walletAddress: localStorage.getItem('playerWallet') || null
                         });
                         setChatInput('');
                       }
@@ -1454,6 +1542,15 @@ export default function GamePage() {
             </motion.div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Prevent SSR - only render on client
+  if (!mounted) {
+    return (
+      <div className="relative w-screen h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white text-xl">Loading...</div>
       </div>
     );
   }
@@ -1548,22 +1645,18 @@ export default function GamePage() {
                 // Wait for server to process (200ms should be enough)
                 setTimeout(() => {
                   console.log('⏱️ Delay complete, disconnecting socket');
-                  const savedName = localStorage.getItem('playerName');
                   if (socketRef.current) {
                     socketRef.current.disconnect();
                   }
                   localStorage.clear();
-                  if (savedName) localStorage.setItem('playerName', savedName);
                   window.location.href = '/';
                 }, 200);
               } else {
                 console.warn('⚠️ No gameId or socket, disconnecting immediately');
-                const savedName = localStorage.getItem('playerName');
                 if (socketRef.current) {
                   socketRef.current.disconnect();
                 }
                 localStorage.clear();
-                if (savedName) localStorage.setItem('playerName', savedName);
                 window.location.href = '/';
               }
             }}
@@ -1578,7 +1671,7 @@ export default function GamePage() {
 
       {/* Leaderboard - Top Left (Mobile & Desktop) */}
       {leaderboardVisible && (
-        <div className="absolute top-4 left-4 bg-gray-800/95 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden w-44 sm:w-48 md:w-56 z-40" style={{ pointerEvents: 'auto' }}>
+        <div className="absolute top-4 left-4 bg-gray-800/95 backdrop-blur-md rounded-xl border border-gray-700 shadow-xl overflow-hidden w-32 sm:w-40 md:w-56 z-40" style={{ pointerEvents: 'auto' }}>
           <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-3 md:px-4 py-1.5 md:py-2 flex justify-between items-center">
             <h3 className="text-white font-bold text-xs md:text-sm uppercase tracking-wide">Leaderboard</h3>
             <button
@@ -1917,6 +2010,111 @@ export default function GamePage() {
           } text-white px-4 py-3 rounded-lg shadow-2xl border border-white/20 backdrop-blur-md`}>
             <p className="text-sm font-medium text-center md:text-left">{toastMessage.message}</p>
           </div>
+        </div>
+      )}
+
+      {/* Chat Bubble - Only for Spectators with wallet */}
+      {isSpectating && currentUsername && typeof window !== 'undefined' && localStorage.getItem('playerWallet') && (
+        <motion.button
+          onClick={() => setShowChat(true)}
+          className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-40 w-12 h-12 md:w-14 md:h-14 bg-gradient-to-r from-neon-blue to-neon-purple rounded-full shadow-2xl flex items-center justify-center"
+          style={{ pointerEvents: 'auto' }}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          animate={{ y: [0, -5, 0] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
+          <svg className="w-6 h-6 md:w-7 md:h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          {chatMessages.length > 0 && (
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold">
+              {chatMessages.length > 9 ? '9+' : chatMessages.length}
+            </div>
+          )}
+        </motion.button>
+      )}
+
+      {/* Chat Modal - Only for Spectators */}
+      {showChat && isSpectating && (
+        <div 
+          className="fixed inset-0 z-50 flex items-end md:items-end md:justify-end p-2 md:p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowChat(false)}
+          style={{ pointerEvents: 'auto' }}
+        >
+          <motion.div 
+            className="w-full md:max-w-md bg-cyber-dark/95 backdrop-blur-xl border-2 border-neon-blue/50 rounded-t-2xl md:rounded-2xl shadow-2xl overflow-hidden"
+            initial={{ opacity: 0, y: 100 }}
+            animate={{ opacity: 1, y: 0 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-r from-neon-blue to-neon-purple px-4 py-3 flex items-center justify-between">
+              <h3 className="text-white font-bold text-base md:text-lg">Global Chat</h3>
+              <button onClick={() => setShowChat(false)} className="text-white/70 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="h-[350px] overflow-y-auto p-4 space-y-2 bg-cyber-darker/50">
+              {chatMessages.length === 0 ? (
+                <div className="text-center py-16 text-gray-500 text-sm">
+                  <svg className="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <p>Be the first to chat!</p>
+                </div>
+              ) : (
+                chatMessages.map((msg) => (
+                  <div key={msg.id} className="bg-cyber-dark/50 rounded-lg p-2 border border-neon-blue/20">
+                    <span className="text-neon-green font-bold text-xs">{msg.username}:</span>{' '}
+                    <span className="text-gray-300 text-xs">{msg.message}</span>
+                  </div>
+                ))
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="p-3 bg-cyber-dark border-t border-neon-blue/30">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && chatInput.trim()) {
+                      if (socketRef.current && typeof window !== 'undefined') {
+                        socketRef.current.emit('chatMessage', {
+                          username: currentUsername,
+                          message: chatInput.trim(),
+                          walletAddress: localStorage.getItem('playerWallet')
+                        });
+                      }
+                      setChatInput('');
+                    }
+                  }}
+                  placeholder="Type a message..."
+                  className="flex-1 bg-cyber-darker border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-neon-blue text-sm"
+                />
+                  <button
+                    onClick={() => {
+                      if (chatInput.trim() && socketRef.current && typeof window !== 'undefined') {
+                        socketRef.current.emit('chatMessage', {
+                          username: currentUsername,
+                          message: chatInput.trim(),
+                          walletAddress: localStorage.getItem('playerWallet')
+                        });
+                        setChatInput('');
+                      }
+                    }}
+                  className="px-6 py-3 bg-gradient-to-r from-neon-blue to-neon-purple rounded-lg text-white font-bold hover:opacity-90 transition-opacity text-sm"
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </motion.div>
         </div>
       )}
     </div>

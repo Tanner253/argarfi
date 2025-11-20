@@ -13,9 +13,7 @@ interface Transaction {
   txSignature: string | null;
   gameId: string;
   tier: string;
-  playersCount: number;
   status: 'success' | 'failed' | 'pending';
-  retries: number;
   error?: string;
 }
 
@@ -26,10 +24,17 @@ interface TransactionLogProps {
 
 export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [stats, setStats] = useState({
+    totalCount: 0,
+    successCount: 0,
+    totalPaid: 0,
+    uniqueWinners: 0
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (isOpen) {
+      // Load once when opened
       loadTransactions();
     }
   }, [isOpen]);
@@ -40,9 +45,19 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
       const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
       const response = await fetch(`${serverUrl}/api/transactions?limit=100`);
       const data = await response.json();
-      setTransactions(data.transactions || []);
+      
+      // Set transactions and stats from API
+      const txList = Array.isArray(data.transactions) ? data.transactions : [];
+      setTransactions(txList);
+      
+      // Use stats from server (database aggregations)
+      if (data.stats) {
+        setStats(data.stats);
+      }
     } catch (error) {
       console.error('Failed to load transactions:', error);
+      setTransactions([]);
+      setStats({ totalCount: 0, successCount: 0, totalPaid: 0, uniqueWinners: 0 });
     } finally {
       setLoading(false);
     }
@@ -76,19 +91,34 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
       >
         {/* Header */}
         <div className="sticky top-0 z-10 bg-gradient-to-r from-neon-green via-neon-blue to-neon-purple p-6 border-b-2 border-neon-green/50">
-          <div className="flex justify-between items-center">
-            <div>
+          <div className="flex justify-between items-start">
+            <div className="flex-1">
               <h2 className="text-3xl font-black text-white mb-2">💰 Transaction Log</h2>
               <p className="text-sm text-white/80">All winner payouts verified on Solana blockchain</p>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  loadTransactions();
+                }}
+                disabled={loading}
+                className="p-2 hover:bg-white/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh transactions"
+              >
+                <svg className={`w-5 h-5 text-white ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+              >
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -105,7 +135,7 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <p className="text-gray-400 text-lg mb-2">No transactions yet</p>
-              <p className="text-gray-500 text-sm">Be the first to win and earn ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC!</p>
+              <p className="text-gray-500 text-sm">Play games and win prizes - all payouts appear here!</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -135,7 +165,9 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
                       </div>
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-bold text-white text-lg">{tx.winnerName}</span>
+                          <span className="font-bold text-white text-lg">
+                            {tx.winnerName || truncateAddress(tx.walletAddress)}
+                          </span>
                           <span className={`text-xs font-bold px-2 py-0.5 rounded ${
                             tx.status === 'success' ? 'bg-neon-green/20 text-neon-green' :
                             tx.status === 'failed' ? 'bg-red-500/20 text-red-400' :
@@ -145,12 +177,20 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
                           </span>
                         </div>
                         <div className="text-sm text-gray-400 space-y-1">
-                          <div className="flex items-center gap-2">
+                          <a
+                            href={`https://solscan.io/account/${tx.walletAddress}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 hover:text-neon-blue transition-colors"
+                          >
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             <span className="font-mono">{truncateAddress(tx.walletAddress)}</span>
-                          </div>
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
                           <div className="flex items-center gap-2">
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -165,10 +205,10 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
                     <div className="flex items-center gap-4 md:flex-col md:items-end">
                       <div className="text-right">
                         <div className="text-2xl font-black text-neon-green">
-                          ${tx.amountUSDC}
+                          ${typeof tx.amountUSDC === 'number' ? tx.amountUSDC.toFixed(2) : '0.00'}
                         </div>
                         <div className="text-xs text-gray-500">
-                          ${tx.tier} • {tx.playersCount}p
+                          {tx.tier && tx.tier !== 'unknown' ? `$${tx.tier} Game` : 'Game'}
                         </div>
                       </div>
                       {tx.txSignature && (
@@ -195,30 +235,30 @@ export function TransactionLog({ isOpen, onClose }: TransactionLogProps) {
           )}
         </div>
 
-        {/* Footer Stats */}
+        {/* Footer Stats - All values from database aggregations */}
         <div className="sticky bottom-0 bg-cyber-dark/90 backdrop-blur-lg border-t-2 border-neon-green/30 p-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div>
               <div className="text-2xl font-black text-neon-green">
-                {transactions.filter(tx => tx.status === 'success').length}
+                {stats.successCount}
               </div>
               <div className="text-xs text-gray-400">Successful</div>
             </div>
             <div>
               <div className="text-2xl font-black text-neon-blue">
-                ${transactions.filter(tx => tx.status === 'success').reduce((sum, tx) => sum + tx.amountUSDC, 0)}
+                ${stats.totalPaid.toFixed(2)}
               </div>
               <div className="text-xs text-gray-400">Total Paid</div>
             </div>
             <div>
               <div className="text-2xl font-black text-white">
-                {transactions.length}
+                {stats.totalCount}
               </div>
               <div className="text-xs text-gray-400">Total Games</div>
             </div>
             <div>
               <div className="text-2xl font-black text-neon-purple">
-                {new Set(transactions.map(tx => tx.walletAddress)).size}
+                {stats.uniqueWinners}
               </div>
               <div className="text-xs text-gray-400">Unique Winners</div>
             </div>

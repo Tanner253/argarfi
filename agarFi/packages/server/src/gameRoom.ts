@@ -6,6 +6,7 @@ import { config } from './config.js';
 
 export class GameRoom {
   id: string;
+  sessionId?: string; // Unique session ID for database auditing
   tier: string;
   io: Server;
   players: Map<string, Player>;
@@ -18,8 +19,10 @@ export class GameRoom {
   playerTargets: Map<string, Vector2>;
   currentMapBounds: { minX: number; maxX: number; minY: number; maxY: number };
   onGameEnd?: () => void;
-  onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, tier: string, playersCount: number) => Promise<void>;
+  onWinnerDetermined?: (winnerId: string, winnerName: string, gameId: string, sessionId: string, tier: string, playersCount: number) => Promise<void>;
   onCheatDetected?: (playerId: string, playerName: string, reason: string) => void;
+  lastWinnerId?: string;
+  lastWinnerName?: string;
   private lastWinCheckTime: number = 0;
   
   constructor(id: string, tier: string, io: Server) {
@@ -368,7 +371,7 @@ export class GameRoom {
 
       // ANTI-CHEAT: Only allow ONE merge per player per tick
       let hasMergedThisTick = false;
-      
+
       // Check all blob pairs for merging
       outerLoop: for (let i = 0; i < player.blobs.length; i++) {
         for (let j = i + 1; j < player.blobs.length; j++) {
@@ -740,18 +743,32 @@ export class GameRoom {
     console.log(`   Duration: ${((Date.now() - this.gameStartTime) / 1000).toFixed(1)}s`);
     console.log(`   Total players: ${this.players.size}`);
     
-    // Trigger winner payout if callback provided
+    // Store winner info for session tracking
+    if (winnerId) {
+      const winner = this.players.get(winnerId);
+      if (winner) {
+        this.lastWinnerId = winnerId;
+        this.lastWinnerName = winner.name;
+      }
+    }
+    
+    // Trigger winner payout/distribution if callback provided
     if (winnerId && this.onWinnerDetermined) {
       const winner = this.players.get(winnerId);
-      if (winner && !winner.isBot) {
-        console.log(`💰 Winner is human player - triggering payout for ${winner.name}`);
-        // Trigger payout asynchronously (don't block game end)
-        this.onWinnerDetermined(winnerId, winner.name, this.id, this.tier, this.players.size)
+      if (winner) {
+        if (winner.isBot) {
+          console.log(`🤖 Winner is bot (${winner.name}) - will pay highest ranking human`);
+        } else {
+          console.log(`💰 Winner is human player - triggering payout for ${winner.name}`);
+        }
+        
+        // Always trigger callback (handles both human and bot wins)
+        // For paid tiers: distribution service will handle bot wins
+        // For Dream tier: only pays if human won
+        this.onWinnerDetermined(winnerId, winner.name, this.id, this.sessionId || this.id, this.tier, this.players.size)
           .catch(error => {
             console.error(`❌ PAYOUT FAILED for ${winner.name}:`, error);
           });
-      } else if (winner?.isBot) {
-        console.log(`🤖 Winner is bot (${winner.name}) - no payout`);
       }
     }
     

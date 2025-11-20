@@ -75,6 +75,7 @@ export interface Lobby {
   countdownStartTime: number | null;
   gameStartTime: number | null;
   maxPlayers: number;
+  potSize: number; // Total USDC collected for this lobby
 }
 
 export interface GameState {

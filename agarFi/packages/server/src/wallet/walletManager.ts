@@ -159,9 +159,9 @@ export class WalletManager {
   }
 
   /**
-   * Transfer USDC to winner
+   * Transfer USDC to winner (with memo for tracking)
    */
-  async transferUSDC(recipientAddress: string, amount: number): Promise<string> {
+  async transferUSDC(recipientAddress: string, amount: number, gameId?: string, tier?: string): Promise<string> {
     try {
       const recipient = new PublicKey(recipientAddress);
 
@@ -178,8 +178,21 @@ export class WalletManager {
 
       console.log(`Transferring ${amount} USDC to ${recipientAddress}...`);
 
-      // Create transfer instruction
-      const transaction = new Transaction().add(
+      // Create transaction with memo for tracking
+      const transaction = new Transaction();
+      
+      // Add memo if provided (for transaction tracking)
+      if (gameId && tier) {
+        const memoText = `AgarFi|${gameId}|${tier}`;
+        transaction.add({
+          keys: [],
+          programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+          data: Buffer.from(memoText, 'utf-8')
+        });
+      }
+      
+      // Add transfer instruction
+      transaction.add(
         createTransferInstruction(
           sourceATA, // source
           destinationATA, // destination

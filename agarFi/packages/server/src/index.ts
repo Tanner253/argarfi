@@ -6,8 +6,17 @@ import { config } from './config.js';
 import { LobbyManager } from './lobbyManager.js';
 import { WalletManager } from './wallet/walletManager.js';
 import { PaymentService } from './wallet/paymentService.js';
+import { EntryFeeService } from './wallet/entryFeeService.js';
+import { DistributionService } from './wallet/distributionService.js';
+import { refundIncompletPayments } from './wallet/refundIncomplete.js';
 import { getAllTransactions, getRecentTransactions } from './wallet/transactionLogger.js';
 import { loadBannedIPs, saveBan, getAllBans } from './banManager.js';
+import { connectDB } from './lib/db.js';
+import { Transaction } from './models/Transaction.js';
+import { User } from './models/User.js';
+import { BannedIP } from './models/BannedIP.js';
+import { ChatMessage } from './models/ChatMessage.js';
+import { DreamTimer } from './models/DreamTimer.js';
 
 const app = express();
 app.use(cors());
@@ -44,46 +53,245 @@ const DEV_IP_WHITELIST = [
 
 const lobbyManager = new LobbyManager(io);
 
-// Initialize payment service (if configured)
+// Track if DB is ready (used later for refund check)
+let dbReady = false;
+
+// Initialize MongoDB connection and load Dream timer
+connectDB()
+  .then(async (mongoose) => {
+    console.log('🗄️ Database ready');
+    
+    // Ensure connection is fully established
+    if (mongoose.connection.readyState === 1) {
+      dbReady = true;
+      // Initialize LobbyManager (loads Dream timer from DB)
+      await lobbyManager.initialize();
+    } else {
+      console.warn('⚠️ Database connection not ready - skipping Dream timer load');
+    }
+  })
+  .catch(error => {
+    console.error('⚠️ Database connection failed (will continue without DB):', error.message);
+  });
+
+// Initialize payment services (if configured)
 let paymentService: PaymentService | null = null;
+let entryFeeService: EntryFeeService | null = null;
+let distributionService: DistributionService | null = null;
+let walletManager: WalletManager | null = null;
+
 if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
   try {
-    const walletManager = new WalletManager(
+    walletManager = new WalletManager(
       process.env.SOLANA_RPC_URL,
       process.env.PLATFORM_WALLET_PRIVATE_KEY,
       process.env.USDC_MINT_ADDRESS || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
       parseFloat(process.env.WINNER_REWARD_USDC || '1')
     );
     paymentService = new PaymentService(walletManager);
-    console.log('💰 Payment service initialized');
+    entryFeeService = new EntryFeeService(walletManager);
+    distributionService = new DistributionService(walletManager);
+    
+    console.log('💰 Payment services initialized');
     console.log(`   Platform wallet: ${walletManager.getPlatformAddress()}`);
     console.log(`   Winner reward: ${walletManager.getRewardAmount()} USDC`);
+    console.log(`   Entry fee collection: ✅ Enabled`);
+    console.log(`   Pot distribution: 80/15/5 split`);
+    
+    // Set entry fee service reference on lobby manager
+    lobbyManager.setEntryFeeService(entryFeeService);
+    
+    // Check for incomplete payments and refund (if DB is ready)
+    if (dbReady) {
+      // Small delay to ensure DB operations are ready
+      setTimeout(async () => {
+        await refundIncompletPayments(walletManager!);
+      }, 2000);
+    }
     
     // Set winner payout callback on lobby manager
-    lobbyManager.setWinnerPayoutCallback(async (winnerId, winnerName, gameId, tier, playersCount) => {
-      const walletAddress = playerWallets.get(winnerId);
+    lobbyManager.setWinnerPayoutCallback(async (winnerId, winnerName, gameId, sessionId, tier, playersCount) => {
+      // Check if this is Dream Mode (free tier)
+      const isDreamMode = tier === 'dream';
       
-      if (!walletAddress) {
-        console.error(`❌ No wallet address found for winner ${winnerName} (${winnerId})`);
-        return;
-      }
-      
-      console.log(`💰 Processing payout for winner: ${winnerName} (${walletAddress})`);
-      
-      const result = await paymentService!.sendWinnerPayout(
-        winnerId,
-        winnerName,
-        walletAddress,
-        gameId,
-        tier,
-        playersCount
-      );
-      
-      if (result.success) {
-        console.log(`✅ Winner ${winnerName} paid ${walletManager.getRewardAmount()} USDC`);
-        console.log(`   TX: ${result.txSignature}`);
+      if (isDreamMode) {
+        // Dream Mode: Free hourly game (only for humans)
+        const isBot = winnerName.startsWith('Bot ');
+        
+        if (isBot) {
+          console.log('\n╔════════════════════════════════════════════════════════════╗');
+          console.log('║           🤖 DREAM MODE - BOT WIN                          ║');
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log(`║ Session ID:    ${sessionId.padEnd(44)} ║`);
+          console.log(`║ Winner:        ${winnerName.padEnd(44)} ║`);
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log('║ 🚫 PAYOUT:      $0.00 (Bots not eligible)                  ║');
+          console.log('║ Type:          DREAM MODE (Human players only)             ║');
+          console.log('╚════════════════════════════════════════════════════════════╝\n');
+          return;
+        }
+        
+        const walletAddress = playerWallets.get(winnerId);
+        
+        if (!walletAddress) {
+          console.error(`❌ No wallet address found for winner ${winnerName} (${winnerId})`);
+          return;
+        }
+        
+        const result = await paymentService!.sendWinnerPayout(
+          winnerId,
+          winnerName,
+          walletAddress,
+          sessionId,
+          tier,
+          playersCount
+        );
+        
+        if (result.success) {
+          console.log('\n╔════════════════════════════════════════════════════════════╗');
+          console.log('║           💰 DREAM MODE PAYOUT SUMMARY                     ║');
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log(`║ Session ID:    ${sessionId.padEnd(44)} ║`);
+          console.log(`║ Winner:        ${winnerName.padEnd(44)} ║`);
+          console.log(`║ Wallet:        ${walletAddress.substring(0, 44).padEnd(44)} ║`);
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log(`║ 🎁 REWARD:      $${walletManager!.getRewardAmount().toFixed(2).padStart(42)} ║`);
+          console.log(`║ TX:            ${result.txSignature!.substring(0, 44).padEnd(44)} ║`);
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log('║ Type:          DREAM MODE (Platform Funded - 100%)         ║');
+          console.log('║ Split:         None (Dream Mode gives full reward)         ║');
+          console.log('╚════════════════════════════════════════════════════════════╝\n');
+          
+          // Send payout info to winner's socket
+          const winnerSocket = Array.from(io.sockets.sockets.values()).find(s => {
+            const pid = Array.from(playerWallets.entries()).find(([id, wallet]) => wallet === walletAddress)?.[0];
+            return pid && s.id === pid;
+          });
+          
+          if (winnerSocket) {
+            winnerSocket.emit('payoutReceived', {
+              gameId: sessionId,
+              amount: walletManager!.getRewardAmount(),
+              txSignature: result.txSignature
+            });
+            console.log(`📤 Dream payout info sent to winner: $${walletManager!.getRewardAmount()}`);
+          } else {
+            io.to(gameId).emit('payoutReceived', {
+              gameId: sessionId,
+              amount: walletManager!.getRewardAmount(),
+              txSignature: result.txSignature
+            });
+            console.log(`📤 Dream payout info broadcasted: $${walletManager!.getRewardAmount()}`);
+          }
+        } else {
+          console.error(`\n❌ Failed to pay Dream Mode winner ${winnerName}: ${result.error}\n`);
+        }
       } else {
-        console.error(`❌ Failed to pay winner ${winnerName}: ${result.error}`);
+        // Paid tier: Use distribution service (80/15/5)
+        console.log(`💰 Processing pot distribution for ${tier} game: ${sessionId}`);
+        
+        // Check if winner is a bot
+        const isBot = winnerName.startsWith('Bot ');
+        let actualWinnerWallet = playerWallets.get(winnerId);
+        let actualWinnerName = winnerName;
+        
+        // Get actual pot from paid entry fees (needed for all checks)
+        const totalPot = await entryFeeService!.getLobbyPot(gameId);
+        const paidPlayers = await entryFeeService!.getPaidPlayerCount(gameId);
+        
+        // If bot won, find highest ranking human player
+        if (isBot) {
+          console.log(`🤖 Bot won - finding highest ranking human player...`);
+          const humanWinner = lobbyManager.getHighestRankingHuman(gameId);
+          
+          if (humanWinner) {
+            actualWinnerWallet = playerWallets.get(humanWinner.playerId);
+            actualWinnerName = humanWinner.playerName;
+            console.log(`   Highest human: ${actualWinnerName}`);
+          } else {
+            console.log('\n╔════════════════════════════════════════════════════════════╗');
+            console.log('║           🤖 ALL BOTS GAME - NO PAYOUT                     ║');
+            console.log('╠════════════════════════════════════════════════════════════╣');
+            console.log(`║ Session ID:    ${sessionId.padEnd(44)} ║`);
+            console.log(`║ Tier:          $${tier.padEnd(43)} ║`);
+            console.log('╠════════════════════════════════════════════════════════════╣');
+            console.log(`║ 💵 POT:         $${totalPot.toFixed(2).padStart(42)} ║`);
+            console.log('╠════════════════════════════════════════════════════════════╣');
+            console.log('║ 🏦 DISPOSITION: Returned to treasury (no human winners)    ║');
+            console.log('║ 💰 Platform:    +$' + totalPot.toFixed(2).padStart(40) + ' ║');
+            console.log('╚════════════════════════════════════════════════════════════╝\n');
+            return; // Pot stays in treasury
+          }
+        }
+        
+        if (!actualWinnerWallet) {
+          console.error(`❌ No wallet address found for winner ${actualWinnerName}`);
+          return;
+        }
+        
+        if (totalPot === 0 || paidPlayers === 0) {
+          console.log('\n╔════════════════════════════════════════════════════════════╗');
+          console.log('║           ⚠️  NO POT TO DISTRIBUTE                         ║');
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log(`║ Session ID:    ${sessionId.padEnd(44)} ║`);
+          console.log(`║ Tier:          $${tier.padEnd(43)} ║`);
+          console.log(`║ Winner:        ${actualWinnerName.padEnd(44)} ║`);
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log(`║ 💰 POT:         $${totalPot.toFixed(2).padStart(42)} ║`);
+          console.log(`║ 👥 Paid Players: ${paidPlayers.toString().padStart(42)} ║`);
+          console.log('╠════════════════════════════════════════════════════════════╣');
+          console.log('║ Reason:        No entry fees collected (dev/test mode?)    ║');
+          console.log('╚════════════════════════════════════════════════════════════╝\n');
+          return;
+        }
+        
+        // Distribute pot: 80% winner, 15% platform, 5% burn
+        const result = await distributionService!.distributePot(
+          sessionId,
+          tier,
+          totalPot,
+          paidPlayers,
+          actualWinnerWallet,
+          actualWinnerName,
+          isBot,
+          entryFeeService // Pass service so it can clear payments immediately
+        );
+        
+        if (result.success) {
+          // Distribution service already logs detailed summary box
+          console.log(`\n🎉 GAME ${sessionId} PAYOUT COMPLETE`);
+          
+          // Send payout info to winner's socket
+          const winnerSocket = Array.from(io.sockets.sockets.values()).find(s => {
+            // Find socket with matching player ID
+            const pid = Array.from(playerWallets.entries()).find(([id, wallet]) => wallet === actualWinnerWallet)?.[0];
+            return pid && s.id === pid;
+          });
+          
+          if (winnerSocket) {
+            winnerSocket.emit('payoutReceived', {
+              gameId: sessionId,
+              amount: result.winnerAmount,
+              txSignature: result.winnerTx
+            });
+            console.log(`📤 Payout info sent to winner's client: $${result.winnerAmount}`);
+          } else {
+            // Fallback: broadcast to game room
+            io.to(gameId).emit('payoutReceived', {
+              gameId: sessionId,
+              amount: result.winnerAmount,
+              txSignature: result.winnerTx
+            });
+            console.log(`📤 Payout info broadcasted to game room: $${result.winnerAmount}`);
+          }
+        } else {
+          console.error(`\n❌ ══════════════════════════════════════════════════════════`);
+          console.error(`   PAYOUT FAILED FOR GAME: ${sessionId}`);
+          console.error(`   Error: ${result.error}`);
+          console.error(`   Pot: $${totalPot} (${paidPlayers} paid players)`);
+          console.error(`   Winner: ${actualWinnerName}`);
+          console.error(`   ══════════════════════════════════════════════════════════\n`);
+        }
       }
     });
     
@@ -152,10 +360,54 @@ app.get('/api/game-modes', (req: any, res: any) => {
 });
 
 // Transaction log endpoint
-app.get('/api/transactions', (req: any, res: any) => {
-  const limit = req.query.limit ? parseInt(req.query.limit) : 50;
-  const transactions = getRecentTransactions(limit);
-  res.json({ transactions });
+app.get('/api/transactions', async (req: any, res: any) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit) : 50;
+    const transactions = await getRecentTransactions(limit);
+    
+    // Get stats from database (not from loaded transactions)
+    let stats = {
+      totalCount: transactions.length,
+      successCount: 0,
+      totalPaid: 0,
+      uniqueWinners: 0
+    };
+    
+    try {
+      const mongoose = (await import('mongoose')).default;
+      if (mongoose.connection.readyState === 1) {
+        const { Transaction } = await import('./models/Transaction.js');
+        
+        // Total count
+        stats.totalCount = await (Transaction as any).countDocuments();
+        
+        // Successful count
+        stats.successCount = await (Transaction as any).countDocuments({ status: 'success' });
+        
+        // Total paid (sum of successful transactions)
+        const paidResult = await (Transaction as any).aggregate([
+          { $match: { status: 'success' } },
+          { $group: { _id: null, total: { $sum: '$amountUSDC' } } }
+        ]);
+        stats.totalPaid = paidResult.length > 0 ? paidResult[0].total : 0;
+        
+        // Unique winners (distinct wallet addresses)
+        const uniqueWallets = await (Transaction as any).distinct('walletAddress');
+        stats.uniqueWinners = uniqueWallets.length;
+      }
+    } catch (error) {
+      console.error('Error fetching transaction stats:', error);
+    }
+    
+    res.json({ transactions, stats });
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    res.status(500).json({ 
+      transactions: [], 
+      stats: { totalCount: 0, successCount: 0, totalPaid: 0, uniqueWinners: 0 },
+      error: 'Failed to fetch transactions' 
+    });
+  }
 });
 
 // Platform wallet status endpoint
@@ -190,10 +442,93 @@ app.get('/api/platform-status', async (req: any, res: any) => {
   }
 });
 
+// API endpoint to get user by wallet (for username prefill)
+app.get('/api/user/:wallet', async (req: any, res: any) => {
+  try {
+    const user = await (User as any).findOne({ walletAddress: req.params.wallet })
+      .select('walletAddress username totalWinnings gamesWon')
+      .lean();
+    
+    if (!user) {
+      return res.json({ user: null });
+    }
+    
+    res.json({ user });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// Update username endpoint
+app.post('/api/user/update-username', async (req: any, res: any) => {
+  try {
+    const { walletAddress, username } = req.body;
+    
+    if (!walletAddress || !username) {
+      return res.status(400).json({ error: 'Wallet address and username required' });
+    }
+    
+    const trimmedUsername = username.trim();
+    
+    if (trimmedUsername.length === 0 || trimmedUsername.length > 20) {
+      return res.status(400).json({ error: 'Username must be 1-20 characters' });
+    }
+    
+    // Update or create user with new username
+    const user = await (User as any).findOneAndUpdate(
+      { walletAddress },
+      {
+        $set: { username: trimmedUsername, lastActive: new Date() },
+        $setOnInsert: { totalWinnings: 0, gamesWon: 0, gamesPlayed: 0 }
+      },
+      { upsert: true, new: true }
+    );
+    
+    console.log(`📝 Username updated: ${trimmedUsername} (${walletAddress.substring(0, 8)}...)`);
+    
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error('Error updating username:', error);
+    res.status(500).json({ error: 'Failed to update username' });
+  }
+});
+
 // API endpoint to get banned IPs (admin use)
 app.get('/api/bans', (req: any, res: any) => {
   const bans = getAllBans();
   res.json({ bans, count: bans.length });
+});
+
+// API endpoint for leaderboard (top 50 winners)
+app.get('/api/leaderboard', async (req: any, res: any) => {
+  try {
+    const leaderboard = await (User as any).find()
+      .sort({ totalWinnings: -1 })
+      .limit(50)
+      .select('walletAddress username totalWinnings gamesWon')
+      .lean();
+    
+    res.json({ leaderboard });
+  } catch (error) {
+    console.error('Error fetching leaderboard:', error);
+    res.status(500).json({ error: 'Failed to fetch leaderboard' });
+  }
+});
+
+// API endpoint to get chat messages
+app.get('/api/chat', async (req: any, res: any) => {
+  try {
+    const messages = await (ChatMessage as any).find()
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .lean();
+    
+    res.json({ messages: messages.reverse() }); // Reverse to show oldest first
+  } catch (error) {
+    console.error('Error fetching chat:', error);
+    res.status(500).json({ error: 'Failed to fetch chat' });
+  }
 });
 
 // Helper function to get real client IP
@@ -306,8 +641,8 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Player joins lobby (with optional wallet address)
-  socket.on('playerJoinLobby', ({ playerId, playerName, tier, walletAddress }) => {
+  // Player joins lobby (with optional wallet address and payment proof)
+  socket.on('playerJoinLobby', async ({ playerId, playerName, tier, walletAddress, txSignature }) => {
     // Get client IP using helper function
     const ipString = getClientIP(socket);
     const maskedIP = maskIP(ipString);
@@ -329,6 +664,24 @@ io.on('connection', (socket) => {
       }
     }
     
+    // Create/update user record in database
+    if (walletAddress && playerName) {
+      try {
+        const user = await (User as any).findOneAndUpdate(
+          { walletAddress },
+          {
+            $set: { username: playerName, lastActive: new Date() },
+            $inc: { gamesPlayed: 1 },
+            $setOnInsert: { totalWinnings: 0, gamesWon: 0 }
+          },
+          { upsert: true, new: true }
+        );
+        console.log(`👤 User updated: ${playerName} (${user.gamesPlayed} games played)`);
+      } catch (error) {
+        console.error('❌ Failed to save user:', error);
+      }
+    }
+    
     // Store wallet address if provided
     if (walletAddress) {
       playerWallets.set(playerId, walletAddress);
@@ -336,6 +689,50 @@ io.on('connection', (socket) => {
       console.log(`💼 Wallet: ${playerName} → ${shortWallet}`);
     } else {
       console.warn(`⚠️ No wallet: ${playerName}`);
+    }
+    
+    // Check if this tier requires payment
+    const gameMode = config.gameModes.find(m => m.tier === tier);
+    const requiresPayment = gameMode?.requiresPayment && tier !== 'dream';
+    
+    if (requiresPayment) {
+      // Paid tier - validate payment
+      if (!walletAddress) {
+        socket.emit('lobbyError', { message: 'Wallet connection required for paid games' });
+        return;
+      }
+      
+      if (!txSignature) {
+        socket.emit('lobbyError', { message: 'Payment required. Please pay entry fee first.' });
+        return;
+      }
+      
+      if (!entryFeeService) {
+        socket.emit('lobbyError', { message: 'Payment system not available' });
+        return;
+      }
+      
+      const entryFee = gameMode!.buyIn;
+      const lobbyId = `lobby_${tier}`;
+      
+      // Record the payment
+      const paymentResult = await entryFeeService.collectEntryFee(
+        playerId,
+        playerName,
+        walletAddress,
+        lobbyId,
+        tier,
+        entryFee,
+        txSignature
+      );
+      
+      if (!paymentResult.success) {
+        socket.emit('lobbyError', { message: `Payment validation failed: ${paymentResult.error}` });
+        return;
+      }
+      
+      // Add to lobby pot
+      lobbyManager.addToPot(tier, entryFee);
     }
     
     const result = lobbyManager.joinLobby(socket.id, playerId, playerName, tier);
@@ -431,8 +828,51 @@ io.on('connection', (socket) => {
   });
 
   // Player leaves lobby (explicit)
-  socket.on('playerLeaveLobby', ({ playerId }) => {
+  socket.on('playerLeaveLobby', async ({ playerId }) => {
     console.log(`👋 Player ${playerId} explicitly leaving lobby`);
+    
+    // Check if player should get a refund (game not started yet)
+    const lobbyId = playerToLobby.get(playerId);
+    if (lobbyId && entryFeeService) {
+      const lobby = lobbyManager['lobbies'].get(lobbyId);
+      
+      // Refund if game hasn't started (waiting or countdown)
+      if (lobby && (lobby.status === 'waiting' || lobby.status === 'countdown')) {
+        const walletAddress = playerWallets.get(playerId);
+        const tier = lobby.tier;
+        const gameMode = config.gameModes.find(m => m.tier === tier);
+        
+        if (walletAddress && gameMode?.requiresPayment && tier !== 'dream') {
+          const entryFee = gameMode.buyIn;
+          
+          // Find player name from lobby
+          const player = lobby.players.get(playerId);
+          const playerName = player?.name || 'Unknown';
+          
+          console.log(`💸 Processing refund for ${playerName} (game not started)`);
+          
+          const refundResult = await entryFeeService.refundEntryFee(
+            playerId,
+            playerName,
+            walletAddress,
+            entryFee,
+            lobbyId,
+            tier
+          );
+          
+          if (refundResult.success) {
+            socket.emit('refundProcessed', { amount: entryFee, tx: refundResult.txSignature });
+            
+            // Remove from lobby pot
+            lobbyManager.removeFromPot(tier, entryFee);
+          } else {
+            console.error(`❌ Refund failed: ${refundResult.error}`);
+            socket.emit('refundFailed', { error: refundResult.error });
+          }
+        }
+      }
+    }
+    
     lobbyManager.leaveLobby(playerId);
     playerToLobby.delete(playerId);
     
@@ -467,20 +907,50 @@ io.on('connection', (socket) => {
   });
 
   // Global chat message
-  socket.on('chatMessage', ({ username, message }) => {
+  socket.on('chatMessage', async ({ username, message, walletAddress }) => {
     if (!username || !message || message.length > 200) return;
+    
+    const trimmedUsername = username.trim();
+    const trimmedMessage = message.trim();
+    
+    // Create/update user record if wallet provided
+    if (walletAddress) {
+      try {
+        await (User as any).findOneAndUpdate(
+          { walletAddress },
+          {
+            $set: { username: trimmedUsername, lastActive: new Date() },
+            $setOnInsert: { totalWinnings: 0, gamesWon: 0, gamesPlayed: 0 }
+          },
+          { upsert: true }
+        );
+        console.log(`👤 User created/updated via chat: ${trimmedUsername}`);
+      } catch (error) {
+        console.error('❌ Failed to create user from chat:', error);
+      }
+    }
+    
+    // Save chat message to database
+    try {
+      await (ChatMessage as any).create({
+        username: trimmedUsername,
+        message: trimmedMessage,
+        timestamp: Date.now()
+      });
+      console.log(`💬 Chat saved: ${trimmedUsername}: ${trimmedMessage}`);
+    } catch (error) {
+      console.error('❌ Failed to save chat to DB:', error);
+    }
     
     // Broadcast to all connected clients
     io.emit('chatMessage', {
-      username: username.trim(),
-      message: message.trim()
+      username: trimmedUsername,
+      message: trimmedMessage
     });
-    
-    console.log(`💬 Chat: ${username}: ${message}`);
   });
 
   // Player disconnects
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     connectedClients--;
     const clientIP = maskIP(getClientIP(socket));
     console.log(`🔌 DISCONNECT: ${socket.id} from ${clientIP} (Total: ${connectedClients})`);
@@ -505,17 +975,51 @@ io.on('connection', (socket) => {
       // Get lobby from playerToLobby map
       const lobbyId = playerToLobby.get(playerIdToRemove);
       let playerName = playerIdToRemove;
+      let shouldRefund = false;
+      let lobby = null;
       
       if (lobbyId) {
         // Access lobby directly from lobbyManager's private lobbies map
-        const lobby = lobbyManager['lobbies'].get(lobbyId);
+        lobby = lobbyManager['lobbies'].get(lobbyId);
         if (lobby) {
           const player = lobby.players.get(playerIdToRemove);
           playerName = player?.name || playerIdToRemove;
+          
+          // Check if refund should be processed (game not started yet)
+          shouldRefund = lobby.status === 'waiting' || lobby.status === 'countdown';
         }
       }
       
       console.log(`👋 PLAYER LEFT: ${playerName} disconnected`);
+      
+      // Process refund if applicable
+      if (shouldRefund && lobby && entryFeeService) {
+        const walletAddress = playerWallets.get(playerIdToRemove);
+        const tier = lobby.tier;
+        const gameMode = config.gameModes.find(m => m.tier === tier);
+        
+        if (walletAddress && gameMode?.requiresPayment && tier !== 'dream') {
+          const entryFee = gameMode.buyIn;
+          
+          console.log(`💸 Auto-refund on disconnect: ${playerName} ($${entryFee})`);
+          
+          const refundResult = await entryFeeService.refundEntryFee(
+            playerIdToRemove,
+            playerName,
+            walletAddress,
+            entryFee,
+            lobbyId!,
+            tier
+          );
+          
+          if (refundResult.success) {
+            // Remove from lobby pot
+            lobbyManager.removeFromPot(tier, entryFee);
+          } else {
+            console.error(`❌ Auto-refund failed for ${playerName}: ${refundResult.error}`);
+          }
+        }
+      }
       
       lobbyManager.leaveLobby(playerIdToRemove);
       playerToLobby.delete(playerIdToRemove);

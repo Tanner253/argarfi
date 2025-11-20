@@ -2,9 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from './components/useWallet';
+import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
 import { TransactionLog } from './components/TransactionLog';
+import { Leaderboard } from './components/Leaderboard';
+import { payEntryFee, checkUSDCBalance } from './utils/payment';
 
 interface GameMode {
   tier: string;
@@ -17,13 +20,16 @@ interface GameMode {
 interface LobbyStatus {
   tier: string;
   playersLocked: number;
-  realPlayerCount?: number;
+  realPlayerCount: number; // Human players only
   botCount?: number;
   maxPlayers: number;
+  min?: number;
   status: string;
   countdown: number | null;
   spectatorCount?: number;
   timeRemaining?: number | null;
+  dreamCooldown?: number | null;
+  potSize?: number;
 }
 
 interface GameEvent {
@@ -46,18 +52,80 @@ export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const { connected, walletAddress, disconnect, connect } = useWallet();
+  const solanaWallet = useSolanaWallet(); // For signing transactions
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
-  const [playerName, setPlayerName] = useState(() => {
-    // Load saved name from localStorage on mount
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('playerName') || '';
+  const [playerName, setPlayerName] = useState('');
+  const [payingForTier, setPayingForTier] = useState<string | null>(null);
+  const [showCountdownWarning, setShowCountdownWarning] = useState(false);
+  const [pendingJoinTier, setPendingJoinTier] = useState<string | null>(null);
+
+  // Fetch username from database when wallet connects
+  useEffect(() => {
+    const fetchUsername = async () => {
+      if (connected && walletAddress) {
+        try {
+          const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+          const response = await fetch(`${serverUrl}/api/user/${walletAddress}`);
+          const data = await response.json();
+          
+          if (data.user && data.user.username) {
+            setPlayerName(data.user.username);
+          }
+        } catch (error) {
+          // Silent fail - user can enter name manually
+        }
+      } else {
+        // Clear name when wallet disconnects
+        setPlayerName('');
+      }
+    };
+    
+    fetchUsername();
+  }, [connected, walletAddress]);
+
+  // Fetch USDC balance when wallet connects
+  useEffect(() => {
+    let balanceInterval: NodeJS.Timeout | null = null;
+    
+    if (connected && walletAddress) {
+      const fetchBalance = async () => {
+        try {
+          const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
+          
+          if (!rpcUrl) {
+            setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
+            setUsdcBalance(0);
+            return;
+          }
+          
+          const result = await checkUSDCBalance(walletAddress, 0, rpcUrl);
+          setUsdcBalance(result.balance);
+        } catch (error) {
+          setUsdcBalance(0); // Show 0 instead of null on error
+        }
+      };
+      
+      // Fetch immediately
+      fetchBalance();
+      
+      // Refresh balance every 30 seconds
+      balanceInterval = setInterval(fetchBalance, 30000);
+    } else {
+      // Clear balance when wallet disconnects
+      setUsdcBalance(null);
     }
-    return '';
-  });
+    
+    return () => {
+      if (balanceInterval) {
+        clearInterval(balanceInterval);
+      }
+    };
+  }, [connected, walletAddress]);
   const [showRoadmap, setShowRoadmap] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showTransactionLog, setShowTransactionLog] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentEvent, setCurrentEvent] = useState<GameEvent | null>(null);
@@ -68,11 +136,33 @@ export default function HomePage() {
   const [totalSpectators, setTotalSpectators] = useState(0);
   const [platformStatus, setPlatformStatus] = useState<{ canPay: boolean; message: string } | null>(null);
   const [bgPosition, setBgPosition] = useState({ x: 50, y: 50 }); // Parallax background position
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
 
   const CONTRACT_ADDRESS = '6WQxQRguwYVwrHpFkNJsLK2XRnWLuqaLuQ8VBGXupump';
 
   const calculateWinnings = (buyIn: number, maxPlayers: number) => {
+    // 80% of full pot (all players paying)
     return Math.floor(buyIn * maxPlayers * 0.8);
+  };
+
+  const getActualWinnings = (lobby: LobbyStatus | undefined, tier: string) => {
+    // For Dream Mode, return fixed amount from env
+    if (tier === 'dream') {
+      return parseInt(process.env.NEXT_PUBLIC_DREAM_PAYOUT || process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1');
+    }
+    
+    // For paid tiers, show 80% of current pot
+    if (lobby?.potSize) {
+      return Math.floor(lobby.potSize * 0.8);
+    }
+    
+    // Fallback: show potential winnings if pot is full
+    const gameMode = gameModes.find(m => m.tier === tier);
+    if (gameMode) {
+      return calculateWinnings(gameMode.buyIn, gameMode.maxPlayers);
+    }
+    
+    return 0;
   };
 
   const copyToClipboard = async () => {
@@ -249,7 +339,11 @@ export default function HomePage() {
         message: msg.message,
         timestamp: Date.now()
       };
-      setChatMessages(prev => [...prev, newMsg].slice(-50));
+      setChatMessages(prev => {
+        const newMessages = [...prev, newMsg];
+        // Keep only the most recent 100 messages
+        return newMessages.slice(-100);
+      });
     });
 
     // Listen for stats updates
@@ -285,16 +379,37 @@ export default function HomePage() {
     };
   }, []);
 
-  // Save playerName to localStorage whenever it changes
-  useEffect(() => {
-    if (playerName.trim()) {
-      localStorage.setItem('playerName', playerName);
-    }
-  }, [playerName]);
+  // Username is saved to DB when joining lobby, no localStorage needed
 
+  // Load chat history from database on mount
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+    const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+    fetch(`${serverUrl}/api/chat`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.messages && Array.isArray(data.messages)) {
+          // Take last 100 messages only
+          const recentMessages = data.messages.slice(-100).map((msg: any) => ({
+            id: msg._id || msg.timestamp.toString(),
+            username: msg.username,
+            message: msg.message,
+            timestamp: msg.timestamp
+          }));
+          setChatMessages(recentMessages);
+        }
+      })
+      .catch(console.error);
+  }, []);
+
+  // Auto-scroll chat to bottom only when opening chat
+  useEffect(() => {
+    if (showChat) {
+      // Use setTimeout to ensure DOM has updated
+      setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [showChat]);
 
   const sendChatMessage = () => {
     // Require wallet connection for chat
@@ -309,13 +424,14 @@ export default function HomePage() {
     if (socket) {
       socket.emit('chatMessage', {
         username: playerName,
-        message: chatInput.trim()
+        message: chatInput.trim(),
+        walletAddress: walletAddress || null
       });
       setChatInput('');
     }
   };
 
-  const joinLobby = (tier: string) => {
+  const joinLobby = async (tier: string) => {
     // Require wallet connection
     if (!connected) {
       connect(); // Opens official wallet modal
@@ -327,13 +443,95 @@ export default function HomePage() {
       return;
     }
 
-    const playerId = `player_${Date.now()}`;
-    localStorage.setItem('playerId', playerId);
-    localStorage.setItem('playerName', playerName);
-    localStorage.setItem('selectedTier', tier);
-    localStorage.setItem('playerWallet', walletAddress || '');
+    // Check if tier requires payment (all except Dream)
+    const gameMode = gameModes.find(m => m.tier === tier);
+    const requiresPayment = tier !== 'dream';
     
-    router.push('/game');
+    if (requiresPayment && gameMode) {
+      // Check if countdown already started - show warning
+      const lobby = getLobbyStatus(tier);
+      if (lobby?.countdown !== null && lobby?.countdown !== undefined && lobby.countdown > 0) {
+        // Show warning dialog
+        setPendingJoinTier(tier);
+        setShowCountdownWarning(true);
+        return;
+      }
+      
+      // Process payment
+      await handlePaymentAndJoin(tier, gameMode.buyIn);
+    } else {
+      // Free tier (Dream Mode) - join directly
+      const playerId = `player_${Date.now()}`;
+      localStorage.setItem('playerId', playerId);
+      localStorage.setItem('playerName', playerName);
+      localStorage.setItem('selectedTier', tier);
+      localStorage.setItem('playerWallet', walletAddress || '');
+      
+      router.push('/game');
+    }
+  };
+  
+  const handlePaymentAndJoin = async (tier: string, entryFee: number) => {
+    setPayingForTier(tier);
+    
+    try {
+      const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
+      
+      if (!rpcUrl) {
+        setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
+        setPayingForTier(null);
+        return;
+      }
+      
+      // Check USDC balance
+      const balanceCheck = await checkUSDCBalance(walletAddress!, entryFee, rpcUrl);
+      
+      if (!balanceCheck.hasEnough) {
+        setToastMessage(`Insufficient USDC balance. You have $${balanceCheck.balance.toFixed(2)}, need $${entryFee}`);
+        setPayingForTier(null);
+        return;
+      }
+      
+      // Send payment
+      const paymentResult = await payEntryFee(solanaWallet, entryFee, rpcUrl);
+      
+      if (!paymentResult.success) {
+        setToastMessage(`Payment failed: ${paymentResult.error}`);
+        setPayingForTier(null);
+        return;
+      }
+      
+      // Update balance immediately (optimistic update)
+      if (usdcBalance !== null) {
+        setUsdcBalance(usdcBalance - entryFee);
+      }
+      
+      // Payment confirmed - join lobby
+      const playerId = `player_${Date.now()}`;
+      localStorage.setItem('playerId', playerId);
+      localStorage.setItem('playerName', playerName);
+      localStorage.setItem('selectedTier', tier);
+      localStorage.setItem('playerWallet', walletAddress || '');
+      localStorage.setItem('entryPaymentTx', paymentResult.signature || '');
+      
+      router.push('/game');
+      
+    } catch (error: any) {
+      setToastMessage(`Payment error: ${error.message}`);
+    } finally {
+      setPayingForTier(null);
+    }
+  };
+  
+  const confirmJoinDuringCountdown = async () => {
+    setShowCountdownWarning(false);
+    if (pendingJoinTier) {
+      const gameMode = gameModes.find(m => m.tier === pendingJoinTier);
+      if (gameMode) {
+        await handlePaymentAndJoin(pendingJoinTier, gameMode.buyIn);
+      }
+      setPendingJoinTier(null);
+    }
   };
 
   const spectateGame = (tier: string) => {
@@ -366,6 +564,8 @@ export default function HomePage() {
       if (e.key === 'Escape') {
         setShowRoadmap(false);
         setShowChat(false);
+        setShowLeaderboard(false);
+        setShowTransactionLog(false);
       }
     };
 
@@ -456,6 +656,20 @@ export default function HomePage() {
           </div>
           
           <div className="flex items-center gap-1.5 md:gap-2">
+            {/* Leaderboard Button */}
+            <motion.button
+              onClick={() => setShowLeaderboard(true)}
+              className="px-2 md:px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400 text-xs font-bold hover:bg-yellow-500/20 transition-all flex items-center gap-1"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+              </svg>
+              <span className="hidden sm:inline">🏆 Top 50</span>
+              <span className="sm:hidden">🏆</span>
+            </motion.button>
+
             {/* Transaction Log Button */}
             <motion.button
               onClick={() => setShowTransactionLog(true)}
@@ -494,6 +708,28 @@ export default function HomePage() {
               <span className="hidden sm:inline">Whitepaper</span>
               <span className="sm:hidden">📄</span>
             </motion.a>
+            
+            {/* USDC Balance (when connected) */}
+            {connected && (
+              <div className="px-2 md:px-3 py-1.5 bg-neon-green/10 border border-neon-green/30 rounded-lg flex items-center gap-1.5">
+                <svg className="w-3 h-3 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {usdcBalance === null ? (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 bg-neon-green rounded-full animate-pulse" />
+                    <span className="text-gray-400 text-xs">Loading...</span>
+                  </div>
+                ) : (
+                  <>
+                    <span className={`font-bold text-xs ${usdcBalance > 0 ? 'text-neon-green' : 'text-gray-400'}`}>
+                      ${usdcBalance.toFixed(2)}
+                    </span>
+                    <span className="hidden sm:inline text-gray-400 text-xs">USDC</span>
+                  </>
+                )}
+              </div>
+            )}
             
             {/* Wallet Button */}
             {connected ? (
@@ -557,18 +793,6 @@ export default function HomePage() {
               </div>
             )}
             
-            {/* Promo Banner */}
-            <div className="max-w-2xl mx-auto mb-3">
-              <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border border-neon-green/50 rounded-xl px-4 py-2.5 text-center shadow-lg">
-                <p className="text-sm md:text-base font-bold text-neon-green mb-1 drop-shadow-lg">
-                  🎉 PROMOTIONAL EVENT: Win ${process.env.NEXT_PUBLIC_WINNER_REWARD_USDC || '1'} USDC Per Game! 🎉
-                </p>
-                <p className="text-xs text-gray-200 drop-shadow">
-                  Connect wallet • Play for FREE • Winners earn real rewards
-                </p>
-              </div>
-            </div>
-            
             {/* Player Name - Inline */}
             <motion.div 
               className="max-w-md mx-auto"
@@ -580,6 +804,24 @@ export default function HomePage() {
                 type="text"
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
+                onBlur={async () => {
+                  // Save username to database when user finishes typing
+                  if (connected && walletAddress && playerName.trim()) {
+                    try {
+                      const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+                      await fetch(`${serverUrl}/api/user/update-username`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          walletAddress,
+                          username: playerName.trim()
+                        })
+                      });
+                    } catch (error) {
+                      // Silent fail
+                    }
+                  }
+                }}
                 placeholder="Enter your name to play..."
                 className="w-full px-4 md:px-6 py-3 md:py-4 bg-cyber-dark/70 backdrop-blur-xl border-2 border-neon-green/30 rounded-xl focus:outline-none focus:border-neon-green focus:shadow-lg focus:shadow-neon-green/30 text-white text-center text-base md:text-lg transition-all placeholder-gray-500"
                 maxLength={20}
@@ -589,13 +831,189 @@ export default function HomePage() {
 
           {/* Game Modes - Hero Cards */}
           <div className="space-y-8 md:space-y-10">
-            {/* Whale Mode First (if exists) */}
+            {/* Dream Mode First (Free hourly) */}
+            {(() => {
+              const dreamLobby = getLobbyStatus('dream');
+              const dreamStatus = getGameStatus(dreamLobby);
+
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="relative"
+                >
+                  {/* Rainbow Magical Glow */}
+                  <div className="absolute -inset-2 rounded-3xl opacity-60 group-hover:opacity-80 transition-opacity duration-700 blur-2xl bg-gradient-to-r from-pink-300 via-purple-300 via-blue-300 to-cyan-300 animate-pulse" />
+                  <div className="absolute -inset-1 rounded-3xl opacity-40 blur-xl bg-gradient-to-tr from-yellow-200 via-pink-200 to-purple-200" />
+
+                  <div className="relative bg-gradient-to-br from-pink-400/30 via-purple-400/30 via-blue-400/30 to-cyan-400/30 backdrop-blur-2xl border-2 border-white/40 rounded-3xl overflow-hidden shadow-2xl">
+                    {/* Dark overlay for text readability */}
+                    <div className="absolute inset-0 bg-black/40" />
+                    
+                    {/* Sparkle Overlay */}
+                    <div className="absolute inset-0 opacity-20" style={{
+                  backgroundImage: `radial-gradient(circle at 20% 50%, rgba(255,255,255,0.8) 0%, transparent 50%),
+                                   radial-gradient(circle at 80% 80%, rgba(255,192,203,0.8) 0%, transparent 50%),
+                                   radial-gradient(circle at 40% 20%, rgba(147,51,234,0.6) 0%, transparent 50%)`
+                    }} />
+                    
+                    {/* Floating Badge */}
+                    <motion.div 
+                  className="absolute top-4 left-1/2 -translate-x-1/2 z-10"
+                  animate={{ y: [0, -5, 0] }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                >
+                  <div className="px-4 py-2 bg-white/90 border-2 border-pink-300 rounded-full backdrop-blur-sm shadow-lg">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">✨</span>
+                      <div className="text-sm font-black bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">
+                        FREE • Every {process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1'} Hour{parseInt(process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1') > 1 ? 's' : ''}
+                      </div>
+                      <span className="text-lg">✨</span>
+                    </div>
+                    </div>
+                  </motion.div>
+
+                  <div className="relative p-6 md:p-10 flex flex-col items-center pt-20 md:pt-16">
+                  {/* Title Section */}
+                  <div className="text-center mb-6">
+                    <motion.div
+                      animate={{ 
+                        scale: [1, 1.05, 1],
+                      }}
+                      transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                      className="text-6xl md:text-7xl mb-4"
+                    >
+                      ☁️💭✨
+                    </motion.div>
+                    <div className="bg-black/60 backdrop-blur-sm px-6 py-3 rounded-2xl border border-white/20 mb-3">
+                      <h3 className="text-4xl md:text-5xl lg:text-6xl font-black">
+                        <span className="bg-gradient-to-r from-pink-400 via-purple-400 via-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                          DREAM MODE
+                        </span>
+                      </h3>
+                    </div>
+                    <div className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">
+                      Win ${process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1'} USDC
+                    </div>
+                    <div className="text-sm text-white/80 mt-2 drop-shadow">
+                      Free game every {process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1'} hour!
+                    </div>
+                  </div>
+
+                  {/* Countdown Timer (if counting down) */}
+                  {dreamLobby?.countdown !== null && dreamLobby?.countdown !== undefined && dreamLobby.countdown > 0 && (
+                    <div className="bg-pink-400/20 border-2 border-pink-400/50 rounded-xl p-4 mb-4 text-center">
+                      <div className="text-2xl md:text-3xl font-black text-pink-300 mb-1">
+                        Starting in {dreamLobby.countdown}s
+                      </div>
+                      <div className="text-xs text-white/80">Get ready! ✨</div>
+                    </div>
+                  )}
+
+                  {/* Stats Row */}
+                  {dreamLobby && (
+                    <div className="grid grid-cols-4 gap-2 mb-4 max-w-2xl mx-auto">
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/20">
+                        <div className="text-lg font-black text-pink-300">{dreamLobby.realPlayerCount || 0}</div>
+                        <div className="text-xs text-white/70">Players</div>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/20">
+                        <div className="text-lg font-black text-purple-300">{dreamLobby.botCount || 0}</div>
+                        <div className="text-xs text-white/70">Bots</div>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/20">
+                        <div className="text-lg font-black text-cyan-300">{dreamLobby.spectatorCount || 0}</div>
+                        <div className="text-xs text-white/70">Spectators</div>
+                      </div>
+                      <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center border border-white/20">
+                        <div className="text-lg font-black text-white">{dreamLobby.playersLocked || 0}/{process.env.NEXT_PUBLIC_DREAM_MAX_PLAYERS || '25'}</div>
+                        <div className="text-xs text-white/70">Total</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Progress Bar */}
+                  {dreamLobby && (
+                    <div className="mb-6 max-w-2xl mx-auto">
+                      <div className="h-2 bg-black/40 rounded-full overflow-hidden border border-white/20">
+                        <motion.div 
+                          className="h-full bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400"
+                          initial={false}
+                          animate={{ width: `${((dreamLobby.playersLocked || 0) / parseInt(process.env.NEXT_PUBLIC_DREAM_MAX_PLAYERS || '25')) * 100}%` }}
+                          transition={{ duration: 0.5 }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cooldown Timer (if on cooldown) */}
+                  {dreamLobby?.dreamCooldown && dreamLobby.dreamCooldown > 0 ? (
+                    <div className="bg-purple-500/20 border-2 border-purple-400/50 rounded-xl p-4 mb-4 text-center">
+                      <div className="text-xl md:text-2xl font-black text-purple-300 mb-1">
+                        Next game in {Math.ceil(dreamLobby.dreamCooldown / (1000 * 60))} minutes
+                      </div>
+                      <div className="text-xs text-white/80">One game per {process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1'} hour ⏰</div>
+                    </div>
+                  ) : null}
+
+                  {/* CTA Buttons */}
+                  {dreamLobby?.dreamCooldown && dreamLobby.dreamCooldown > 0 ? (
+                    <motion.button
+                      className="px-8 md:px-16 py-3 md:py-5 bg-gray-600/70 border-2 border-gray-500/50 text-gray-400 cursor-not-allowed rounded-2xl font-black text-lg md:text-2xl shadow-2xl"
+                      disabled
+                    >
+                      ⏰ On Cooldown
+                    </motion.button>
+                  ) : dreamLobby && dreamLobby.status === 'playing' ? (
+                    <motion.button
+                      className="px-8 md:px-16 py-3 md:py-5 bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white rounded-2xl font-black text-lg md:text-2xl shadow-2xl border-2 border-white/30"
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => spectateGame('dream')}
+                    >
+                      👁️ Spectate Dream
+                    </motion.button>
+                  ) : (
+                    <motion.button
+                      className="px-8 md:px-16 py-3 md:py-5 bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-500 hover:from-pink-600 hover:via-purple-600 hover:to-cyan-600 text-white rounded-2xl font-black text-lg md:text-2xl shadow-2xl border-2 border-white/30"
+                      whileHover={{ scale: 1.05, boxShadow: "0 0 40px rgba(236, 72, 153, 0.6)" }}
+                      whileTap={{ scale: 0.95 }}
+                      animate={{
+                        boxShadow: [
+                          "0 0 20px rgba(236, 72, 153, 0.3)",
+                          "0 0 40px rgba(147, 51, 234, 0.4)",
+                          "0 0 20px rgba(236, 72, 153, 0.3)"
+                        ]
+                      }}
+                      transition={{ duration: 3, repeat: Infinity }}
+                      onClick={() => {
+                        if (!connected) {
+                          setToastMessage('Connect wallet to play');
+                          return;
+                        }
+                        if (!playerName.trim()) {
+                          setToastMessage('Enter your name to play');
+                          return;
+                        }
+                        joinLobby('dream');
+                      }}
+                    >
+                      ✨ Play FREE ✨
+                    </motion.button>
+                  )}
+                  </div>
+                </div>
+              </motion.div>
+            );
+            })()}
+
+            {/* Whale Mode (if exists) */}
             {gameModes.filter(m => m.tier === 'whale').map((mode, index) => {
               const lobby = getLobbyStatus(mode.tier);
               const isLocked = mode.locked;
-              const potentialWinnings = calculateWinnings(mode.buyIn, mode.maxPlayers);
-              const isWhale = true;
-              const gameStatus = getGameStatus(lobby);
+              const actualWinnings = getActualWinnings(lobby, mode.tier);
 
               return (
                 <motion.div
@@ -603,79 +1021,99 @@ export default function HomePage() {
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 }}
-                  className="relative group"
+                  className="relative"
                 >
-                  {/* Epic Glow */}
-                  <div className="absolute -inset-1 rounded-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-500 blur-xl bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 animate-pulse" />
+                  {/* Epic Golden Glow */}
+                  <div className="absolute -inset-2 rounded-3xl opacity-60 group-hover:opacity-80 transition-opacity duration-700 blur-2xl bg-gradient-to-r from-yellow-300 via-orange-300 to-red-400 animate-pulse" />
+                  <div className="absolute -inset-1 rounded-3xl opacity-40 blur-xl bg-gradient-to-tr from-yellow-200 via-orange-200 to-red-300" />
 
-                  <div className="relative bg-gradient-to-br from-yellow-500/20 via-orange-500/20 to-red-500/20 backdrop-blur-xl border-2 border-yellow-400/70 rounded-2xl overflow-hidden shadow-2xl">
-                    {/* Animated Background */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-yellow-400/5 via-transparent to-orange-500/5 animate-shimmer" />
+                  <div className="relative bg-gradient-to-br from-yellow-400/30 via-orange-400/30 to-red-400/30 backdrop-blur-2xl border-2 border-yellow-400/60 rounded-3xl overflow-hidden shadow-2xl">
+                    {/* Gold Sparkle Overlay */}
+                    <div className="absolute inset-0 opacity-20" style={{
+                      backgroundImage: `radial-gradient(circle at 20% 50%, rgba(251,191,36,0.8) 0%, transparent 50%),
+                                       radial-gradient(circle at 80% 80%, rgba(249,115,22,0.6) 0%, transparent 50%),
+                                       radial-gradient(circle at 40% 20%, rgba(234,179,8,0.7) 0%, transparent 50%)`
+                    }} />
                     
-                    {/* Unlock Badge - Top Center on Mobile, Top Right on Desktop */}
-                    <div className="absolute top-2 left-1/2 -translate-x-1/2 md:left-auto md:right-4 md:translate-x-0">
+                    {/* Floating Badge */}
+                    <motion.div 
+                      className="absolute top-4 left-1/2 -translate-x-1/2 z-10"
+                      animate={{ y: [0, -5, 0] }}
+                      transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                    >
                       {isLocked ? (
-                        <div className="px-2 md:px-4 py-1 md:py-2 bg-purple-500/40 border border-purple-400/60 rounded-lg backdrop-blur-sm">
-                          <div className="flex items-center gap-1 md:gap-2">
-                            <span className="text-sm md:text-base animate-pulse">💎</span>
-                            <div className="text-xs font-bold text-purple-300 whitespace-nowrap">$1M Market Cap</div>
+                        <div className="px-4 py-2 bg-purple-500/90 border-2 border-purple-300 rounded-full backdrop-blur-sm shadow-lg">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg animate-pulse">💎</span>
+                            <div className="text-sm font-black text-white">
+                              Unlocks at $1M Market Cap
+                            </div>
+                            <span className="text-lg animate-pulse">💎</span>
                           </div>
                         </div>
-                      ) : lobby?.status === 'playing' && lobby.timeRemaining !== null && lobby.timeRemaining !== undefined && (
-                        <div className="px-3 md:px-4 py-1.5 md:py-2 bg-neon-blue/40 border-2 border-neon-blue/60 rounded-lg md:rounded-xl backdrop-blur-sm">
-                          <div className="flex items-center gap-1.5 md:gap-2">
-                            <span className="text-base md:text-lg">⏱</span>
-                            <div className="text-xs md:text-sm font-bold text-neon-blue">
-                              {Math.floor(lobby.timeRemaining / 60000)}:{String(Math.floor((lobby.timeRemaining % 60000) / 1000)).padStart(2, '0')}
+                      ) : (
+                        <div className="px-4 py-2 bg-yellow-500/90 border-2 border-yellow-300 rounded-full backdrop-blur-sm shadow-lg">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">🔥</span>
+                            <div className="text-sm font-black bg-gradient-to-r from-yellow-600 to-orange-600 bg-clip-text text-transparent">
+                              LIVE NOW
                             </div>
+                            <span className="text-lg">🔥</span>
                           </div>
                         </div>
                       )}
-                    </div>
+                    </motion.div>
 
-                    <div className="relative p-4 md:p-6 lg:p-8 flex flex-col items-center pt-12 md:pt-4">
+                    <div className="relative p-6 md:p-10 flex flex-col items-center pt-20 md:pt-16">
                       {/* Title Section */}
-                      <div className="flex flex-col md:flex-row items-center gap-2 md:gap-4 mb-4 md:mb-6 text-center">
-                        <span className="text-5xl md:text-6xl animate-float">🐋</span>
-                        <div>
-                          <h3 className="text-3xl md:text-4xl lg:text-5xl font-black gradient-text text-glow-strong mb-1">
-                            WHALE MODE
-                          </h3>
-                          <div className="text-lg md:text-2xl lg:text-3xl font-bold text-white">
-                            Win ${potentialWinnings.toLocaleString()}
+                      <div className="text-center mb-6">
+                        <motion.div
+                          animate={{ 
+                            scale: [1, 1.05, 1],
+                          }}
+                          transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                          className="text-6xl md:text-7xl mb-4"
+                        >
+                          🐋💰👑
+                        </motion.div>
+                         <div className="bg-black/60 backdrop-blur-sm px-6 py-3 rounded-2xl border border-white/20 mb-3">
+                           <h3 className="text-4xl md:text-5xl lg:text-6xl font-black">
+                             <span className="bg-gradient-to-r from-yellow-400 via-orange-400 to-red-500 bg-clip-text text-transparent">
+                                WHALE MODE
+                              </span>
+                            </h3>
                           </div>
+                        <div className="text-2xl md:text-3xl font-bold text-white drop-shadow-lg">
+                          Win ${actualWinnings.toLocaleString()}
+                        </div>
+                        <div className="text-sm text-white/80 mt-2 drop-shadow">
+                          The ultimate high-stakes battle
                         </div>
                       </div>
 
-                      {/* Prize Grid */}
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 w-full max-w-4xl">
-                        <div className="bg-black/50 border border-yellow-400/40 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs text-yellow-400 mb-1 font-bold">Entry</div>
-                          <div className="text-xl md:text-3xl font-black text-white">$500</div>
+                      {/* Info Pills */}
+                      <div className="flex flex-wrap justify-center gap-3 mb-6">
+                        <div className="px-4 py-2 bg-white/20 border border-white/30 rounded-full backdrop-blur-sm">
+                          <span className="text-white font-bold text-sm">💵 $500 Entry</span>
                         </div>
-                        <div className="bg-black/50 border border-yellow-400/40 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs text-yellow-400 mb-1 font-bold">Players</div>
-                          <div className="text-xl md:text-3xl font-black text-white">50</div>
+                        <div className="px-4 py-2 bg-white/20 border border-white/30 rounded-full backdrop-blur-sm">
+                          <span className="text-white font-bold text-sm">👥 50 Players</span>
                         </div>
-                        <div className="bg-black/50 border border-yellow-400/40 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs text-yellow-400 mb-1 font-bold">Pool</div>
-                          <div className="text-xl md:text-3xl font-black text-white">$25K</div>
+                        <div className="px-4 py-2 bg-white/20 border border-white/30 rounded-full backdrop-blur-sm">
+                          <span className="text-white font-bold text-sm">💰 $25K Pool</span>
                         </div>
-                        <div className="bg-gradient-to-br from-yellow-400/30 to-orange-500/30 border-2 border-yellow-400/70 rounded-lg md:rounded-xl p-2 md:p-4 text-center backdrop-blur-sm">
-                          <div className="text-xs text-yellow-400 mb-1 font-bold">🏆 Winner</div>
-                          <div className="text-xl md:text-3xl font-black gradient-text text-glow">$20K</div>
+                        <div className="px-4 py-2 bg-gradient-to-r from-yellow-400 to-orange-400 border border-white/50 rounded-full">
+                          <span className="text-white font-black text-sm drop-shadow">👑 $20K</span>
                         </div>
                       </div>
 
                       {/* CTA Button */}
-                      <div className="mt-3 md:mt-6 w-full flex justify-center">
-                        <motion.button
-                          className="px-6 md:px-12 py-2 md:py-4 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-lg md:rounded-xl font-black text-base md:text-xl"
-                          disabled
-                        >
-                          🔒 Coming Soon
-                        </motion.button>
-                      </div>
+                      <motion.button
+                        className="px-8 md:px-16 py-3 md:py-5 bg-gray-800/70 border-2 border-gray-600/50 text-gray-400 cursor-not-allowed rounded-2xl font-black text-lg md:text-2xl shadow-2xl"
+                        disabled
+                      >
+                        🔒 Coming Soon
+                      </motion.button>
                     </div>
                   </div>
                 </motion.div>
@@ -684,10 +1122,10 @@ export default function HomePage() {
 
             {/* Regular Game Modes Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 auto-rows-fr">
-            {gameModes.filter(m => m.tier !== 'whale').map((mode, index) => {
+            {gameModes.filter(m => m.tier !== 'whale' && m.tier !== 'dream').map((mode, index) => {
               const lobby = getLobbyStatus(mode.tier);
               const isLocked = mode.locked;
-              const potentialWinnings = calculateWinnings(mode.buyIn, mode.maxPlayers);
+              const actualWinnings = getActualWinnings(lobby, mode.tier);
               const gameStatus = getGameStatus(lobby);
 
               return (
@@ -709,7 +1147,7 @@ export default function HomePage() {
                           ${mode.buyIn} Entry
                         </h3>
                         <div className="text-lg md:text-xl font-bold text-neon-green">
-                          Win ${potentialWinnings.toLocaleString()}
+                          Win ${actualWinnings.toLocaleString()}
                         </div>
                       </div>
                       
@@ -735,14 +1173,14 @@ export default function HomePage() {
                     </div>
 
                     {/* Countdown Timer (if counting down) */}
-                    {lobby?.countdown !== null && lobby?.countdown && lobby.countdown > 0 && (
+                    {lobby?.countdown !== null && lobby?.countdown !== undefined && lobby.countdown > 0 && (
                       <div className="bg-yellow-400/20 border border-yellow-400/50 rounded-lg p-3 mb-3 text-center">
                         <div className="text-xl md:text-2xl font-black text-yellow-400 mb-1">
                           Starting in {lobby.countdown}s
                         </div>
-                        <div className="text-xs text-gray-400">Game is starting soon - join now!</div>
-                      </div>
-                    )}
+                      <div className="text-xs text-gray-400">Game is starting soon - join now!</div>
+                    </div>
+                  )}
 
                     {/* Stats Row */}
                     {lobby && (
@@ -762,6 +1200,31 @@ export default function HomePage() {
                         <div className="bg-cyber-darker/50 rounded p-1.5 md:p-2 text-center">
                           <div className="text-xs md:text-sm font-bold text-white">{lobby.playersLocked}/{lobby.maxPlayers}</div>
                           <div className="text-xs text-gray-500">Total</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pot Size Display (for paid tiers) */}
+                    {lobby && mode.tier !== 'dream' && (
+                      <div className="mb-3">
+                        <div className={`bg-gradient-to-r p-3 rounded-lg text-center border-2 ${
+                          lobby.countdown !== null && lobby.countdown > 0
+                            ? 'from-red-500/20 to-orange-500/20 border-red-500/50'
+                            : 'from-neon-green/10 to-neon-blue/10 border-neon-green/30'
+                        }`}>
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="text-2xl">💰</span>
+                            <div>
+                              <div className="text-lg md:text-xl font-black text-neon-green">
+                                ${lobby.potSize || 0} POT
+                              </div>
+                              {lobby.countdown !== null && lobby.countdown > 0 && (
+                                <div className="text-xs font-bold text-red-400 mt-1">
+                                  🔒 LOCKED - No Refunds
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -795,15 +1258,28 @@ export default function HomePage() {
                       </motion.button>
                     ) : (
                       <motion.button
-                        whileHover={{ scale: 1.03 }}
-                        whileTap={{ scale: 0.97 }}
+                        whileHover={{ scale: payingForTier === mode.tier ? 1 : 1.03 }}
+                        whileTap={{ scale: payingForTier === mode.tier ? 1 : 0.97 }}
                         onClick={() => joinLobby(mode.tier)}
-                        className="w-full py-2.5 md:py-3 rounded-xl font-bold text-sm md:text-base shadow-lg bg-gradient-to-r from-neon-green to-neon-blue text-black"
+                        disabled={payingForTier === mode.tier}
+                        className={`w-full py-2.5 md:py-3 rounded-xl font-bold text-sm md:text-base shadow-lg ${
+                          payingForTier === mode.tier
+                            ? 'bg-gray-600 text-gray-400 cursor-wait'
+                            : 'bg-gradient-to-r from-neon-green to-neon-blue text-black'
+                        }`}
                       >
                         <div className="flex items-center justify-center gap-1.5 md:gap-2">
-                          <span className="line-through text-gray-600 text-xs">${mode.buyIn}</span>
-                          <span className="bg-red-500 text-white px-1.5 md:px-2 py-0.5 rounded text-xs font-black">FREE</span>
-                          <span>⚔️ Play Now</span>
+                          {payingForTier === mode.tier ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                              <span>Processing Payment...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-lg">💰</span>
+                              <span>${mode.buyIn} • Join Game</span>
+                            </>
+                          )}
                         </div>
                       </motion.button>
                     )}
@@ -1301,10 +1777,98 @@ export default function HomePage() {
       )}
 
       {/* Transaction Log Modal */}
-      <TransactionLog 
+      <TransactionLog
         isOpen={showTransactionLog}
         onClose={() => setShowTransactionLog(false)}
       />
+
+      {/* Leaderboard Modal */}
+      {showLeaderboard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowLeaderboard(false)}>
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-cyber-dark border-2 border-yellow-500/50 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gradient-to-r from-yellow-500 to-orange-500 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-2xl font-black text-white flex items-center gap-2">
+                <span>🏆</span>
+                Top 50 Winners
+              </h2>
+              <button
+                onClick={() => setShowLeaderboard(false)}
+                className="text-white/70 hover:text-white transition-colors p-1"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)] bg-gradient-to-b from-cyber-dark to-cyber-darker">
+              <Leaderboard />
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Countdown Warning - Pot Locked Dialog */}
+      <AnimatePresence>
+        {showCountdownWarning && pendingJoinTier && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-gradient-to-br from-red-500/20 to-orange-500/20 border-2 border-red-500/50 rounded-2xl p-6 max-w-md w-full"
+            >
+              <div className="text-center mb-6">
+                <div className="text-6xl mb-4">⚠️</div>
+                <h2 className="text-2xl font-black text-red-400 mb-2">POT IS LOCKED!</h2>
+                <p className="text-white mb-4">
+                  Game is starting soon. Once you join, <span className="font-bold text-red-400">NO REFUNDS</span> will be given.
+                </p>
+                <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-4 mb-4">
+                  <p className="text-sm text-red-300 font-bold">⚠️ WARNING</p>
+                  <p className="text-xs text-gray-300 mt-1">
+                    By clicking "OK", you agree that your entry fee is non-refundable.
+                    You must play the game to completion.
+                  </p>
+                </div>
+                {gameModes.find(m => m.tier === pendingJoinTier) && (
+                  <p className="text-neon-green font-black text-xl mb-4">
+                    Entry Fee: ${gameModes.find(m => m.tier === pendingJoinTier)!.buyIn} USDC
+                  </p>
+                )}
+              </div>
+              
+              <div className="flex gap-3">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setShowCountdownWarning(false);
+                    setPendingJoinTier(null);
+                  }}
+                  className="flex-1 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-xl font-bold"
+                >
+                  Cancel
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={confirmJoinDuringCountdown}
+                  className="flex-1 py-3 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white rounded-xl font-bold"
+                >
+                  OK - Join Now
+                </motion.button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }
