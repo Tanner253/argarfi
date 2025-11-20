@@ -47,15 +47,20 @@ export const config = {
     burnPercentage: parseFloat(process.env.BURN_PERCENTAGE || '5'),
     burnWalletAddress: process.env.BURN_WALLET_ADDRESS || 'H1KqwEHWJNBxnbuiVQi4iTEaR7p1nVXi3aPv34zzBrPE',
   },
-  gameModes: [
-    { tier: 'dream', buyIn: 0, name: 'Dream Mode', maxPlayers: 25, requiresPayment: false },
-    { tier: '1', buyIn: parseFloat(process.env.GAME_MODE_1_ENTRY || '1'), name: 'Micro Stakes', maxPlayers: 25, requiresPayment: true },
-    { tier: '5', buyIn: parseFloat(process.env.GAME_MODE_5_ENTRY || '5'), name: 'Low Stakes', maxPlayers: 25, requiresPayment: true },
-    { tier: '10', buyIn: parseFloat(process.env.GAME_MODE_10_ENTRY || '10'), name: 'Medium Stakes', maxPlayers: 25, requiresPayment: true },
-    { tier: '25', buyIn: parseFloat(process.env.GAME_MODE_25_ENTRY || '25'), name: 'High Stakes', maxPlayers: 25, requiresPayment: true },
-    { tier: '50', buyIn: parseFloat(process.env.GAME_MODE_50_ENTRY || '50'), name: 'Very High Stakes', maxPlayers: 25, requiresPayment: true },
-    { tier: '100', buyIn: parseFloat(process.env.GAME_MODE_100_ENTRY || '100'), name: 'Elite Stakes', maxPlayers: 25, requiresPayment: true },
-    { tier: 'whale', buyIn: parseFloat(process.env.GAME_MODE_WHALE_ENTRY || '500'), name: 'Whale Mode', maxPlayers: 50, locked: true, requiresPayment: true },
-  ],
+  gameModes: [] as Array<{ tier: string; buyIn: number; name: string; maxPlayers: number; locked?: boolean; requiresPayment: boolean }>,
 };
+
+// Build gameModes array AFTER config is created (so we can reference dream settings)
+const dreamMaxPlayers = parseInt(process.env.DREAM_MAX_PLAYERS || '25');
+
+config.gameModes = [
+  { tier: 'dream', buyIn: 0, name: 'Dream Mode', maxPlayers: dreamMaxPlayers, requiresPayment: false },
+  { tier: '1', buyIn: parseFloat(process.env.GAME_MODE_1_ENTRY || '1'), name: 'Micro Stakes', maxPlayers: 25, requiresPayment: true },
+  { tier: '5', buyIn: parseFloat(process.env.GAME_MODE_5_ENTRY || '5'), name: 'Low Stakes', maxPlayers: 25, requiresPayment: true },
+  { tier: '10', buyIn: parseFloat(process.env.GAME_MODE_10_ENTRY || '10'), name: 'Medium Stakes', maxPlayers: 25, requiresPayment: true },
+  { tier: '25', buyIn: parseFloat(process.env.GAME_MODE_25_ENTRY || '25'), name: 'High Stakes', maxPlayers: 25, requiresPayment: true },
+  { tier: '50', buyIn: parseFloat(process.env.GAME_MODE_50_ENTRY || '50'), name: 'Very High Stakes', maxPlayers: 25, requiresPayment: true },
+  { tier: '100', buyIn: parseFloat(process.env.GAME_MODE_100_ENTRY || '100'), name: 'Elite Stakes', maxPlayers: 25, requiresPayment: true },
+  { tier: 'whale', buyIn: parseFloat(process.env.GAME_MODE_WHALE_ENTRY || '500'), name: 'Whale Mode', maxPlayers: 50, locked: true, requiresPayment: true },
+];
 

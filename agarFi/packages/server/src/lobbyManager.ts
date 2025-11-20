@@ -340,6 +340,9 @@ export class LobbyManager {
         }
       }
       
+      // Get min players based on tier
+      const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+      
       return {
         id: lobby.id,
         tier: lobby.tier,
@@ -347,6 +350,7 @@ export class LobbyManager {
         realPlayerCount,
         botCount,
         maxPlayers: lobby.maxPlayers,
+        minPlayers: minPlayers,
         status: lobby.status,
         spectatorCount,
         countdown: lobby.countdownStartTime 
@@ -445,10 +449,12 @@ export class LobbyManager {
     this.checkLobbyCountdown(lobby);
 
     // Auto-fill bots in dev mode (only if lobby is waiting and no game exists)
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+    
     if (config.dev.autoFillBots && 
         lobby.status === 'waiting' && 
         !this.games.has(lobby.id) &&
-        lobby.players.size < config.lobby.minPlayers) {
+        lobby.players.size < minPlayers) {
       this.fillWithBots(lobby);
     }
 
@@ -461,7 +467,10 @@ export class LobbyManager {
   private fillWithBots(lobby: Lobby): void {
     const MAX_BOTS = 10;
     const currentBotCount = Array.from(lobby.players.values()).filter(p => p.isBot).length;
-    const needed = Math.min(config.lobby.minPlayers - lobby.players.size, MAX_BOTS - currentBotCount);
+    
+    // Get minimum players based on lobby type
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+    const needed = Math.min(minPlayers - lobby.players.size, MAX_BOTS - currentBotCount);
     
     if (needed <= 0) return;
     
@@ -513,6 +522,9 @@ export class LobbyManager {
       return;
     }
     
+    // Get minimum players based on lobby type
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+    
     // In dev mode with MIN_PLAYERS_DEV=1, start immediately
     if (config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
       console.log(`Dev mode: Starting game immediately with ${lobby.players.size} player(s)`);
@@ -520,11 +532,11 @@ export class LobbyManager {
       return;
     }
 
-    if (lobby.players.size >= config.lobby.minPlayers) {
+    if (lobby.players.size >= minPlayers) {
       lobby.status = 'countdown';
       lobby.countdownStartTime = Date.now();
 
-      console.log(`Lobby ${lobby.id} countdown started (${lobby.players.size}/${lobby.maxPlayers})`);
+      console.log(`Lobby ${lobby.id} countdown started (${lobby.players.size}/${lobby.maxPlayers}, min: ${minPlayers})`);
 
       // Start countdown timer
       setTimeout(async () => {
@@ -563,9 +575,12 @@ export class LobbyManager {
    * Start game from lobby
    */
   private async startGame(lobby: Lobby): Promise<void> {
+    // Get minimum players based on lobby type
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+    
     // Check if still have minimum players
-    if (lobby.players.size < config.lobby.minPlayers) {
-      console.log(`Lobby ${lobby.id} cancelled - insufficient players`);
+    if (lobby.players.size < minPlayers) {
+      console.log(`Lobby ${lobby.id} cancelled - insufficient players (need ${minPlayers}, have ${lobby.players.size})`);
       lobby.status = 'waiting';
       lobby.countdownStartTime = null;
       this.io.to(lobby.id).emit('lobbyCancelled', { message: 'Not enough players' });
@@ -865,6 +880,9 @@ export class LobbyManager {
         }
       }
     }
+    
+    // Get min players based on tier
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
 
     // Add Dream cooldown info if applicable
     let dreamCooldown = null;
@@ -878,7 +896,7 @@ export class LobbyManager {
       realPlayerCount,
       botCount,
       maxPlayers: lobby.maxPlayers,
-      minPlayers: config.lobby.minPlayers,
+      minPlayers: minPlayers, // Uses dream.minPlayers for Dream Mode, lobby.minPlayers for others
       status: lobby.status,
       countdown,
       spectatorCount,
