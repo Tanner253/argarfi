@@ -761,13 +761,14 @@ export default function Home() {
                 phase: 'Days 1-2',
                 title: 'Core Game System',
                 duration: '48 Hours',
-                status: 'In Progress',
+                status: 'Complete',
                 color: 'neon-green',
                 items: [
                   '60fps Canvas rendering with vanilla JS physics',
                   'Socket.io real-time multiplayer (60Hz server tick)',
                   'Blob mechanics: eat, split, merge, eject pellets',
-                  'Four standard game modes ($5, $25, $50, $100)',
+                  'Six standard game modes ($1, $5, $10, $25, $50, $100)',
+                  'Dream Mode - Free hourly game with $1 USDC prize',
                   'Whale Mode infrastructure (50 player lobbies)',
                   'Dynamic lobby system with auto-scaling',
                   'Mobile-optimized touch controls and responsive UI'
@@ -775,34 +776,36 @@ export default function Home() {
               },
               {
                 phase: 'Days 3-4',
-                title: 'x403 Authentication & Anti-Bot',
+                title: 'Payments & Token Economy (x402)',
                 duration: '48 Hours',
-                status: 'Scheduled',
-                color: 'neon-blue',
+                status: 'Complete',
+                color: 'neon-green',
                 items: [
-                  '🔥 x403 protocol integration (trending Web3 auth)',
-                  'Wallet signature verification flow',
-                  'User profiles with stats tracking',
-                  'Real-time leaderboards (top players)',
-                  'One game per wallet enforcement',
-                  '35-minute session caching',
-                  'Anti-farming pattern detection'
+                  '🚀 Solana USDC payment integration (SPL tokens)',
+                  'Entry fee collection with blockchain verification',
+                  'Server-managed prize pools with instant payouts',
+                  '80/15/5 pot distribution (winner/platform/burn)',
+                  '💎 $AgarFi token gating (100k tokens required)',
+                  'MongoDB integration (users, transactions, leaderboards)',
+                  'Public transaction dashboards',
+                  'Real-time pot tracking and transparency',
+                  'Automatic refund system for lobby abandonment'
                 ]
               },
               {
                 phase: 'Days 5-6',
-                title: 'Payments & Token Economy',
+                title: 'x403 Authentication & Anti-Bot',
                 duration: '48 Hours',
                 status: 'Scheduled',
                 color: 'neon-purple',
                 items: [
-                  'Solana USDC payment integration (SPL tokens)',
-                  '🚀 x402-inspired payment UX (viral prompts)',
-                  'Server-managed prize pools with instant payouts',
-                  'Automatic AGAR buyback mechanism (Raydium SDK)',
-                  '30-day staking smart contract (Anchor)',
-                  'Public transaction dashboards',
-                  'Real-time pot tracking and transparency'
+                  '🔥 x403 protocol integration (trending Web3 auth)',
+                  'Wallet signature verification flow',
+                  'Session management with cryptographic proofs',
+                  'One game per wallet enforcement',
+                  '35-minute session caching',
+                  'Anti-farming pattern detection',
+                  'Secure nonce-based challenge-response'
                 ]
               },
               {
@@ -837,13 +840,21 @@ export default function Home() {
                   </div>
                   <div className="mt-4 md:mt-0 text-right">
                     <p className="text-sm text-gray-400">{phase.duration}</p>
-                    <p className={`text-lg font-bold text-${phase.color}`}>{phase.status}</p>
+                    <span className={`inline-block px-4 py-1.5 rounded-full text-sm font-bold ${
+                      phase.status === 'Complete' 
+                        ? 'bg-neon-green/20 text-neon-green' 
+                        : 'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      {phase.status === 'Complete' ? '✓ COMPLETE' : '○ SCHEDULED'}
+                    </span>
                   </div>
                 </div>
                 <ul className="space-y-3">
                   {phase.items.map((item, i) => (
                     <li key={i} className="flex items-start gap-3 text-gray-300">
-                      <div className={`w-2 h-2 bg-${phase.color} rounded-full mt-2`} />
+                      <span className={phase.status === 'Complete' ? 'text-neon-green' : 'text-gray-500'}>
+                        {phase.status === 'Complete' ? '✓' : '→'}
+                      </span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -866,8 +877,8 @@ export default function Home() {
               Ready to Play?
             </h2>
             <p className="text-xl text-gray-300 mb-12 max-w-2xl mx-auto">
-              Jump into Phase 1 now and test your skills! Free play with competitive bots and real players.
-              Full GameFi features with USDC wagering coming in future phases.
+              Play now with real USDC prizes! Compete in Dream Mode (free hourly) or paid tiers ($1-$100).
+              Winners get instant blockchain payouts. Must hold 100k $AgarFi tokens to play.
             </p>
             <a 
               href="https://agarfi.io" 
