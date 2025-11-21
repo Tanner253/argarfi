@@ -66,7 +66,6 @@ export async function payEntryFee(
     console.log('💳 Processing payment...');
     console.log(`   Amount: $${amount} USDC`);
     console.log(`   Wallet: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
-    console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
     console.log('   Wallet capabilities:', {
       sendTransaction: !!wallet.sendTransaction,
       signAndSendTransaction: !!wallet.signAndSendTransaction,
@@ -126,35 +125,39 @@ export async function payEntryFee(
     
     let signature: string;
     
-    // Use sendTransaction (wallet adapter standard - works for both mobile and desktop)
-    // The wallet adapter handles the differences between wallet types internally
+    // Try different signing methods based on wallet capabilities
     try {
-      console.log('📱 Calling sendTransaction (wallet adapter handles signing)...');
-      console.log('   signTransaction exists:', !!wallet.signTransaction);
-      console.log('   sendTransaction exists:', !!wallet.sendTransaction);
-      
-      if (!wallet.sendTransaction) {
+      // Method 1: sendTransaction (preferred for mobile - wallet handles everything)
+      if (wallet.sendTransaction) {
+        console.log('📱 Using sendTransaction (wallet handles signing + sending)');
+        signature = await wallet.sendTransaction(transaction, connection);
+        console.log(`✅ Wallet broadcast transaction: ${signature}`);
+      }
+      // Method 2: signAndSendTransaction (some mobile wallets)
+      else if (wallet.signAndSendTransaction) {
+        console.log('📱 Using signAndSendTransaction (mobile wallet)');
+        const result = await wallet.signAndSendTransaction(transaction);
+        signature = typeof result === 'string' ? result : result.signature;
+        console.log(`✅ Wallet broadcast transaction: ${signature}`);
+      } 
+      // Method 3: signTransaction (desktop wallets - manual send)
+      else if (wallet.signTransaction) {
+        console.log('🖥️  Using signTransaction (desktop wallet - manual send)');
+        const signed = await wallet.signTransaction(transaction);
+        signature = await connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+        console.log(`✅ Transaction broadcast: ${signature}`);
+      } 
+      else {
         return {
           success: false,
-          error: 'Wallet does not support sendTransaction'
+          error: 'Wallet does not support transaction signing'
         };
       }
-      
-      // CRITICAL: Pass transaction options for proper mobile wallet handling
-      // skipPreflight: false = validate transaction before sending
-      // preflightCommitment: 'confirmed' = use confirmed state for simulation
-      signature = await wallet.sendTransaction(transaction, connection, {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: 3
-      });
-      
-      console.log(`✅ Transaction sent! Signature: ${signature}`);
     } catch (signError: any) {
-      console.error('❌ Transaction failed:', signError);
-      console.error('   Error type:', signError.constructor.name);
-      console.error('   Error message:', signError.message);
-      console.error('   Error stack:', signError.stack);
+      console.error('❌ Signing/sending failed:', signError);
       throw signError; // Re-throw to be caught by outer catch
     }
     
@@ -181,23 +184,18 @@ export async function payEntryFee(
     };
   } catch (error: any) {
     console.error('❌ Payment failed:', error);
-    console.error('   Full error object:', JSON.stringify(error, null, 2));
     
     // Parse common error messages
     let userMessage = error.message || 'Payment failed';
     
-    if (error.message?.includes('User rejected') || error.message?.includes('User declined')) {
+    if (error.message?.includes('User rejected')) {
       userMessage = 'Payment cancelled by user';
-    } else if (error.message?.includes('Insufficient funds') || error.message?.includes('insufficient funds')) {
+    } else if (error.message?.includes('Insufficient funds')) {
       userMessage = 'Insufficient SOL for transaction fee';
-    } else if (error.message?.includes('Missing signature') || error.message?.includes('Signature verification failed')) {
-      userMessage = 'Wallet signing error. Please try again or reconnect your wallet.';
+    } else if (error.message?.includes('Missing signature')) {
+      userMessage = 'Wallet signing error. Please try reconnecting your wallet.';
     } else if (error.message?.includes('Blockhash not found')) {
       userMessage = 'Network congestion. Please try again.';
-    } else if (error.message?.includes('Transaction simulation failed')) {
-      userMessage = 'Transaction failed validation. Check your USDC balance and SOL for fees.';
-    } else if (error.name === 'WalletSignTransactionError') {
-      userMessage = 'Wallet signing failed. Please try again.';
     }
     
     return {
@@ -217,7 +215,6 @@ export async function checkUSDCBalance(
 ): Promise<{ hasEnough: boolean; balance: number }> {
   try {
     console.log(`💰 Fetching USDC balance...`);
-    console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
     console.log(`   Wallet: ${walletAddress.slice(0, 8)}...`);
     
     // No WebSocket subscriptions (HTTP only)
@@ -240,7 +237,6 @@ export async function checkUSDCBalance(
     const balance = tokenBalance.value.uiAmount || 0;
     
     console.log(`✅ USDC Balance: $${balance.toFixed(2)}`);
-    console.log(`   Raw: ${tokenBalance.value.amount} (${tokenBalance.value.decimals} decimals)`);
     
     return {
       hasEnough: balance >= requiredAmount,
@@ -258,7 +254,6 @@ export async function checkUSDCBalance(
     
     // Log error for debugging in production
     console.error('❌ Failed to fetch USDC balance:', error.message || error);
-    console.error('   RPC URL:', rpcUrl);
     console.error('   Wallet:', walletAddress);
     
     // Return 0 balance on other errors
