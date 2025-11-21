@@ -154,41 +154,23 @@ export async function payEntryFee(
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
     
-    // Detect wallet type (mobile wallets prefer legacy transactions)
-    const isMobileWallet = wallet.adapter?.name?.includes('Phantom') && 
-                          typeof window !== 'undefined' && 
+    // Detect if we're on mobile (ALL mobile wallets prefer Legacy Transactions)
+    const isMobileDevice = typeof window !== 'undefined' && 
                           /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     
-    console.log(`   Wallet: ${wallet.adapter?.name || 'Unknown'}`);
-    console.log(`   Mobile: ${isMobileWallet}`);
+    console.log(`   Device: ${isMobileDevice ? 'Mobile' : 'Desktop'}`);
+    console.log(`   Wallet: ${wallet.adapter?.name || wallet.constructor?.name || 'Unknown'}`);
     
-    let transaction: Transaction | VersionedTransaction;
+    // ALWAYS use Legacy Transaction on mobile for maximum compatibility
+    const transaction = new Transaction();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = wallet.publicKey;
+    transaction.lastValidBlockHeight = lastValidBlockHeight;
     
-    if (isMobileWallet) {
-      // Use Legacy Transaction for mobile wallets (better compatibility)
-      console.log('📱 Building Legacy Transaction for mobile compatibility');
-      const legacyTx = new Transaction();
-      legacyTx.recentBlockhash = blockhash;
-      legacyTx.feePayer = wallet.publicKey;
-      legacyTx.lastValidBlockHeight = lastValidBlockHeight;
-      
-      // Add all instructions
-      instructions.forEach(ix => legacyTx.add(ix));
-      
-      transaction = legacyTx;
-    } else {
-      // Use VersionedTransaction for desktop
-      console.log('🖥️  Building VersionedTransaction');
-      const messageV0 = new TransactionMessage({
-        payerKey: wallet.publicKey,
-        recentBlockhash: blockhash,
-        instructions: instructions,
-      }).compileToV0Message();
-      
-      transaction = new VersionedTransaction(messageV0);
-    }
+    // Add all instructions
+    instructions.forEach(ix => transaction.add(ix));
     
-    console.log('✅ Transaction built successfully');
+    console.log(`✅ Transaction built (Legacy format for mobile compatibility)`);
     
     let signature: string;
     
