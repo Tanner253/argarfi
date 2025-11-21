@@ -625,14 +625,25 @@ export default function HomePage() {
       
       // Send payment
       console.log('🔄 Initiating payment from page...');
-      console.log('   Wallet object:', {
+      console.log('   Wallet:', {
         publicKey: solanaWallet.publicKey?.toBase58(),
         connected: solanaWallet.connected,
-        hasSendTransaction: !!solanaWallet.sendTransaction,
         hasSignTransaction: !!solanaWallet.signTransaction
       });
       
-      const paymentResult = await payEntryFee(solanaWallet, entryFee, rpcUrl);
+      // Verify signTransaction exists
+      if (!solanaWallet.signTransaction) {
+        setToastMessage('Wallet does not support signing. Please reconnect your wallet.');
+        setPayingForTier(null);
+        return;
+      }
+      
+      const paymentResult = await payEntryFee(
+        solanaWallet.publicKey!,
+        solanaWallet.signTransaction,
+        entryFee,
+        rpcUrl
+      );
       
       if (!paymentResult.success) {
         console.error('💳 Payment failed from page handler:', paymentResult.error);
