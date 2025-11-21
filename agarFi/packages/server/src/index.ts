@@ -42,6 +42,9 @@ const activeConnectionsByIP = new Map<string, string>(); // IP -> socketId (only
 // Anti-farming: Track active players by IP address (legacy - kept for tracking)
 const activePlayersByIP = new Map<string, Set<string>>(); // IP -> Set of playerIds
 
+// Track refunded players to prevent double refunds (player leaves then disconnects)
+const refundedPlayers = new Set<string>(); // playerIds that have already been refunded
+
 // Anti-cheat: Banned IPs (loaded from file for persistence)
 const bannedIPs = loadBannedIPs();
 
@@ -900,6 +903,9 @@ io.on('connection', (socket) => {
           );
           
           if (refundResult.success) {
+            // Mark as refunded to prevent double refund on disconnect
+            refundedPlayers.add(playerId);
+            
             socket.emit('refundProcessed', { amount: entryFee, tx: refundResult.txSignature });
             
             // Remove from lobby pot
@@ -914,6 +920,13 @@ io.on('connection', (socket) => {
     
     lobbyManager.leaveLobby(playerId);
     playerToLobby.delete(playerId);
+    
+    // Clean up refund tracking (will be removed again on disconnect, but good to clean up)
+    setTimeout(() => {
+      if (refundedPlayers.has(playerId)) {
+        refundedPlayers.delete(playerId);
+      }
+    }, 10000); // Clean up after 10 seconds if socket doesn't disconnect
     
     // Remove from IP tracking
     const ipString = getClientIP(socket);
@@ -1042,8 +1055,8 @@ io.on('connection', (socket) => {
       
       console.log(`👋 PLAYER LEFT: ${playerName} disconnected`);
       
-      // Process refund if applicable
-      if (shouldRefund && lobby && entryFeeService) {
+      // Process refund if applicable (and not already refunded)
+      if (shouldRefund && lobby && entryFeeService && !refundedPlayers.has(playerIdToRemove)) {
         const walletAddress = playerWallets.get(playerIdToRemove);
         const tier = lobby.tier;
         const gameMode = config.gameModes.find(m => m.tier === tier);
@@ -1063,16 +1076,26 @@ io.on('connection', (socket) => {
           );
           
           if (refundResult.success) {
+            // Mark as refunded
+            refundedPlayers.add(playerIdToRemove);
+            
             // Remove from lobby pot
             lobbyManager.removeFromPot(tier, entryFee);
           } else {
             console.error(`❌ Auto-refund failed for ${playerName}: ${refundResult.error}`);
           }
         }
+      } else if (refundedPlayers.has(playerIdToRemove)) {
+        console.log(`✅ Skipping refund for ${playerName} - already refunded`);
       }
       
       lobbyManager.leaveLobby(playerIdToRemove);
       playerToLobby.delete(playerIdToRemove);
+      
+      // Clean up refund tracking after disconnect (prevent memory leak)
+      if (refundedPlayers.has(playerIdToRemove)) {
+        refundedPlayers.delete(playerIdToRemove);
+      }
       
       // Remove from IP tracking
       const ipString = getClientIP(socket);

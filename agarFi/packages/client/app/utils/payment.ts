@@ -150,18 +150,43 @@ export async function payEntryFee(
       )
     );
     
-    // Get latest blockhash for VersionedTransaction
+    // Get latest blockhash
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
     
-    // Create VersionedTransaction (better mobile wallet support)
-    const messageV0 = new TransactionMessage({
-      payerKey: wallet.publicKey,
-      recentBlockhash: blockhash,
-      instructions: instructions,
-    }).compileToV0Message();
+    // Detect wallet type (mobile wallets prefer legacy transactions)
+    const isMobileWallet = wallet.adapter?.name?.includes('Phantom') && 
+                          typeof window !== 'undefined' && 
+                          /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     
-    const transaction = new VersionedTransaction(messageV0);
+    console.log(`   Wallet: ${wallet.adapter?.name || 'Unknown'}`);
+    console.log(`   Mobile: ${isMobileWallet}`);
+    
+    let transaction: Transaction | VersionedTransaction;
+    
+    if (isMobileWallet) {
+      // Use Legacy Transaction for mobile wallets (better compatibility)
+      console.log('📱 Building Legacy Transaction for mobile compatibility');
+      const legacyTx = new Transaction();
+      legacyTx.recentBlockhash = blockhash;
+      legacyTx.feePayer = wallet.publicKey;
+      legacyTx.lastValidBlockHeight = lastValidBlockHeight;
+      
+      // Add all instructions
+      instructions.forEach(ix => legacyTx.add(ix));
+      
+      transaction = legacyTx;
+    } else {
+      // Use VersionedTransaction for desktop
+      console.log('🖥️  Building VersionedTransaction');
+      const messageV0 = new TransactionMessage({
+        payerKey: wallet.publicKey,
+        recentBlockhash: blockhash,
+        instructions: instructions,
+      }).compileToV0Message();
+      
+      transaction = new VersionedTransaction(messageV0);
+    }
     
     console.log('✅ Transaction built successfully');
     
@@ -169,31 +194,33 @@ export async function payEntryFee(
     
     // Try different signing methods based on wallet capabilities
     try {
-      // Method 1: sendTransaction (preferred - works with VersionedTransaction)
+      // Method 1: sendTransaction (preferred for all wallets)
       if (wallet.sendTransaction) {
-        console.log('📱 Using sendTransaction (VersionedTransaction for mobile compatibility)');
+        console.log('📱 Using sendTransaction method');
+        console.log('⏳ Opening wallet for approval... (check your wallet app)');
         
-        // Send VersionedTransaction with optimized options
+        // Send transaction with proper options
         signature = await wallet.sendTransaction(transaction, connection, {
-          skipPreflight: false,
+          skipPreflight: false, // Run preflight checks
           preflightCommitment: 'confirmed',
-          maxRetries: 3,
         });
         console.log(`✅ Transaction sent! Signature: ${signature.slice(0, 20)}...`);
       }
       // Method 2: signTransaction (fallback - sign then send)
       else if (wallet.signTransaction) {
-        console.log('🖥️  Using signTransaction (manual send)');
-        const signed = await wallet.signTransaction(transaction);
+        console.log('🖥️  Using signTransaction method');
+        console.log('⏳ Opening wallet for approval...');
         
-        // Serialize and send
+        const signed = await wallet.signTransaction(transaction);
+        console.log('✍️  Transaction signed by user, broadcasting to network...');
+        
+        // Serialize and send (handle both transaction types)
         const rawTransaction = signed.serialize();
         signature = await connection.sendRawTransaction(rawTransaction, {
           skipPreflight: false,
-          preflightCommitment: 'confirmed',
           maxRetries: 3,
         });
-        console.log(`✅ Transaction sent! Signature: ${signature.slice(0, 20)}...`);
+        console.log(`✅ Transaction broadcast! Signature: ${signature.slice(0, 20)}...`);
       } 
       else {
         return {
