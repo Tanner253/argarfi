@@ -16,19 +16,40 @@ export interface PaymentResult {
  */
 export async function payEntryFee(
   publicKey: PublicKey,
-  signTransaction: (transaction: Transaction) => Promise<Transaction>,
+  signTransaction: ((transaction: Transaction) => Promise<Transaction>) | undefined,
   amount: number,
-  rpcUrl: string
+  rpcUrl: string,
+  debugLog?: (msg: string) => void
 ): Promise<PaymentResult> {
+  const log = debugLog || ((msg: string) => console.log(msg));
+  
   try {
-    console.log('💳 Processing payment...');
-    console.log(`   Amount: $${amount} USDC`);
-    console.log(`   Wallet: ${publicKey.toBase58().slice(0, 8)}...`);
-    console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
+    log('💳 Processing payment in utils...');
+    log(`   Amount: $${amount} USDC`);
+    log(`   Wallet: ${publicKey.toBase58().slice(0, 8)}...`);
+    log(`   signTransaction exists: ${!!signTransaction}`);
+    log(`   signTransaction type: ${typeof signTransaction}`);
+    
+    // CRITICAL: Verify signTransaction function exists
+    if (!signTransaction) {
+      log('❌ signTransaction is undefined/null');
+      return {
+        success: false,
+        error: 'Wallet signing function not available. Please disconnect and reconnect your wallet.'
+      };
+    }
+    
+    if (typeof signTransaction !== 'function') {
+      log(`❌ signTransaction is not a function, type: ${typeof signTransaction}`);
+      return {
+        success: false,
+        error: 'Invalid wallet signing function. Please reconnect your wallet.'
+      };
+    }
     
     const connection = new Connection(rpcUrl, 'confirmed');
     
-    console.log('🔨 Constructing USDC transfer transaction...');
+    log('🔨 Building transaction...');
     
     // Get associated token accounts
     const fromTokenAccount = await getAssociatedTokenAddress(
@@ -41,8 +62,8 @@ export async function payEntryFee(
       PLATFORM_WALLET
     );
     
-    console.log(`📥 From: ${fromTokenAccount.toBase58()}`);
-    console.log(`📤 To: ${toTokenAccount.toBase58()}`);
+    log(`   From: ${fromTokenAccount.toBase58().slice(0, 8)}...`);
+    log(`   To: ${toTokenAccount.toBase58().slice(0, 8)}...`);
     
     // Convert USDC amount to smallest unit (6 decimals)
     const usdcAmount = Math.floor(amount * 1_000_000);
@@ -66,27 +87,30 @@ export async function payEntryFee(
     transaction.recentBlockhash = blockhash;
     transaction.lastValidBlockHeight = lastValidBlockHeight; // Important for mobile
     
-    console.log('✅ Transaction constructed');
+    log('✅ Transaction constructed');
     
     // ====================================
     // Sign & Broadcast
     // ====================================
-    console.log('✍️  Signing transaction with wallet...');
+    log('✍️  CALLING signTransaction...');
+    log('   → PHANTOM SHOULD OPEN NOW');
     
     const signed = await signTransaction(transaction);
     
-    console.log('📡 Broadcasting transaction...');
+    log('✅ Transaction signed!');
+    log('📡 Broadcasting...');
+    
     const signature = await connection.sendRawTransaction(signed.serialize());
     
-    console.log(`✅ Transaction sent! Signature: ${signature}`);
+    log(`✅ TX sent: ${signature.slice(0, 16)}...`);
     
     console.log(`✅ Transaction sent! Signature: ${signature}`);
     
     // Wait for confirmation using polling (avoid WebSocket issues)
-    console.log('⏳ Waiting for confirmation...');
+    log('⏳ Confirming...');
     
     let confirmed = false;
-    const maxAttempts = 30; // 30 seconds
+    const maxAttempts = 30;
     
     for (let i = 0; i < maxAttempts; i++) {
       try {
@@ -95,23 +119,22 @@ export async function payEntryFee(
         if (status?.value?.confirmationStatus === 'confirmed' || 
             status?.value?.confirmationStatus === 'finalized') {
           confirmed = true;
-          console.log(`✅ Transaction confirmed! (${status.value.confirmationStatus})`);
+          log(`✅ Confirmed! (${status.value.confirmationStatus})`);
           break;
         }
         
         if (status?.value?.err) {
-          throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+          throw new Error(`TX failed: ${JSON.stringify(status.value.err)}`);
         }
         
-        // Wait 1 second before next poll
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (err) {
-        console.warn(`Attempt ${i + 1}/${maxAttempts} - checking status...`);
+        // Silent retry
       }
     }
     
     if (!confirmed) {
-      console.warn('⚠️ Could not confirm transaction in time, proceeding anyway...');
+      log('⚠️ Confirmation timeout (likely succeeded)');
     }
     
     return {
@@ -119,7 +142,9 @@ export async function payEntryFee(
       signature
     };
   } catch (error: any) {
-    console.error('❌ Payment failed:', error);
+    log(`❌ EXCEPTION: ${error.message || error}`);
+    log(`   Error type: ${error.constructor?.name || 'unknown'}`);
+    log(`   Stack: ${error.stack?.split('\n')[0] || 'no stack'}`);
     
     // User-friendly error messages
     let userMessage = error.message || 'Payment failed';
