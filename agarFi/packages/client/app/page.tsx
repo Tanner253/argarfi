@@ -616,14 +616,33 @@ export default function HomePage() {
         return;
       }
       
+      // Show toast for mobile users to approve in wallet
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        setToastMessage('Check your wallet app to approve the payment...');
+        // Toast will auto-dismiss, don't set null yet
+      }
+      
       // Send payment
+      console.log('🔄 Initiating payment from page...');
+      console.log('   Wallet object:', {
+        publicKey: solanaWallet.publicKey?.toBase58(),
+        connected: solanaWallet.connected,
+        hasSendTransaction: !!solanaWallet.sendTransaction,
+        hasSignTransaction: !!solanaWallet.signTransaction
+      });
+      
       const paymentResult = await payEntryFee(solanaWallet, entryFee, rpcUrl);
       
       if (!paymentResult.success) {
+        console.error('💳 Payment failed from page handler:', paymentResult.error);
         setToastMessage(`Payment failed: ${paymentResult.error}`);
         setPayingForTier(null);
         return;
       }
+      
+      console.log('✅ Payment successful from page handler');
+      console.log('   Signature:', paymentResult.signature);
       
       // Update balance immediately (optimistic update)
       if (usdcBalance !== null) {

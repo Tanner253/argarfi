@@ -57,21 +57,44 @@ export async function payEntryFee(
   try {
     // Check if wallet is connected
     if (!wallet || !wallet.publicKey) {
+      console.error('❌ Wallet not connected');
       return {
         success: false,
         error: 'Wallet not connected'
       };
     }
     
+    // Check if wallet is ready (not connecting)
+    if (wallet.connecting) {
+      console.error('❌ Wallet still connecting');
+      return {
+        success: false,
+        error: 'Wallet is still connecting. Please wait and try again.'
+      };
+    }
+    
+    // Verify wallet has required methods
+    if (!wallet.sendTransaction && !wallet.signTransaction) {
+      console.error('❌ Wallet missing required methods');
+      console.error('   Wallet object keys:', Object.keys(wallet).join(', '));
+      return {
+        success: false,
+        error: 'Wallet does not support transactions. Please try reconnecting your wallet.'
+      };
+    }
+    
     console.log('💳 Processing payment...');
     console.log(`   Amount: $${amount} USDC`);
     console.log(`   Wallet: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
+    console.log(`   Connected: ${wallet.connected}`);
+    console.log(`   Connecting: ${wallet.connecting}`);
     console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
     console.log('   Wallet capabilities:', {
       sendTransaction: !!wallet.sendTransaction,
       signAndSendTransaction: !!wallet.signAndSendTransaction,
       signTransaction: !!wallet.signTransaction,
-      signAllTransactions: !!wallet.signAllTransactions
+      signAllTransactions: !!wallet.signAllTransactions,
+      wallet: wallet.wallet?.adapter?.name || 'unknown'
     });
     
     // Use polling instead of WebSocket (many RPC providers don't support WS)
@@ -102,8 +125,10 @@ export async function payEntryFee(
     console.log(`   Amount: ${usdcAmount} (${amount} USDC)`);
     
     // Get recent blockhash BEFORE building transaction
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    // Use 'confirmed' instead of 'finalized' for fresher blockhash (better for mobile)
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
+    console.log(`   Last valid block height: ${lastValidBlockHeight}`);
     
     // Create transaction
     const transaction = new Transaction();
@@ -124,41 +149,80 @@ export async function payEntryFee(
     
     console.log('✅ Transaction built successfully');
     
+    // Validate transaction before sending
+    if (!transaction.recentBlockhash) {
+      console.error('❌ Transaction missing blockhash');
+      return {
+        success: false,
+        error: 'Failed to build transaction: missing blockhash'
+      };
+    }
+    
+    if (!transaction.feePayer) {
+      console.error('❌ Transaction missing fee payer');
+      return {
+        success: false,
+        error: 'Failed to build transaction: missing fee payer'
+      };
+    }
+    
+    console.log('✅ Transaction validated, ready to sign');
+    console.log(`   Instructions: ${transaction.instructions.length}`);
+    console.log(`   Fee payer: ${transaction.feePayer.toBase58().slice(0, 8)}...`);
+    console.log(`   Required signers: ${transaction.instructions.flatMap(i => i.keys.filter(k => k.isSigner).map(k => k.pubkey.toBase58().slice(0, 8))).join(', ')}`);
+    
     let signature: string;
     
     // Try different signing methods based on wallet capabilities
     try {
-      // Method 1: sendTransaction (preferred for mobile - wallet handles everything)
+      // Method 1: sendTransaction (standard wallet adapter - works on mobile and desktop)
       if (wallet.sendTransaction) {
-        console.log('📱 Using sendTransaction (wallet handles signing + sending)');
-        signature = await wallet.sendTransaction(transaction, connection);
-        console.log(`✅ Wallet broadcast transaction: ${signature}`);
+        console.log('📱 Using sendTransaction (standard wallet adapter)');
+        console.log('   Prompting wallet to sign and send...');
+        
+        // Important: On mobile, the wallet modal should pop up here
+        // If it doesn't, the wallet adapter might not be properly connected
+        
+        signature = await wallet.sendTransaction(transaction, connection, {
+          skipPreflight: false, // Run preflight to catch errors early
+          maxRetries: 3,
+          preflightCommitment: 'confirmed'
+        });
+        
+        console.log(`✅ Wallet signed and broadcast transaction: ${signature}`);
       }
-      // Method 2: signAndSendTransaction (some mobile wallets)
-      else if (wallet.signAndSendTransaction) {
-        console.log('📱 Using signAndSendTransaction (mobile wallet)');
-        const result = await wallet.signAndSendTransaction(transaction);
-        signature = typeof result === 'string' ? result : result.signature;
-        console.log(`✅ Wallet broadcast transaction: ${signature}`);
-      } 
-      // Method 3: signTransaction (desktop wallets - manual send)
+      // Method 2: signTransaction then manual send (fallback)
       else if (wallet.signTransaction) {
-        console.log('🖥️  Using signTransaction (desktop wallet - manual send)');
+        console.log('🖥️  Using signTransaction (manual send)');
+        
         const signed = await wallet.signTransaction(transaction);
+        
         signature = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+          skipPreflight: false,
+          maxRetries: 3,
+          preflightCommitment: 'confirmed'
+        });
+        
         console.log(`✅ Transaction broadcast: ${signature}`);
       } 
       else {
+        console.error('❌ Wallet missing required methods');
+        console.error('   Available:', Object.keys(wallet).filter(k => typeof wallet[k] === 'function'));
         return {
           success: false,
-          error: 'Wallet does not support transaction signing'
+          error: 'Wallet does not support transaction signing. Please try a different wallet.'
         };
       }
     } catch (signError: any) {
       console.error('❌ Signing/sending failed:', signError);
+      console.error('   Error type:', signError.constructor.name);
+      console.error('   Message:', signError.message);
+      
+      // Check for user rejection
+      if (signError.message?.includes('User rejected') || signError.code === 4001) {
+        throw new Error('Payment cancelled by user');
+      }
+      
       throw signError; // Re-throw to be caught by outer catch
     }
     
