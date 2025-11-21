@@ -11,50 +11,82 @@ export interface PaymentResult {
 }
 
 /**
+ * Confirm transaction using polling (no WebSocket)
+ * Many RPC providers don't support WebSocket subscriptions
+ */
+async function confirmTransactionPolling(
+  connection: Connection,
+  signature: string,
+  maxRetries: number = 60
+): Promise<boolean> {
+  let retries = 0;
+  
+  while (retries < maxRetries) {
+    try {
+      const status = await connection.getSignatureStatus(signature);
+      
+      if (status?.value?.confirmationStatus === 'confirmed' || 
+          status?.value?.confirmationStatus === 'finalized') {
+        return true;
+      }
+      
+      if (status?.value?.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+      }
+      
+      // Wait 1 second before next check
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      retries++;
+    } catch (error) {
+      retries++;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  
+  return false; // Timeout
+}
+
+/**
  * Send USDC entry fee to platform wallet
- * Matches Silk Road implementation exactly
  */
 export async function payEntryFee(
-  publicKey: PublicKey,
-  signTransaction: ((transaction: Transaction) => Promise<Transaction>) | undefined,
+  wallet: any, // Solana wallet adapter (from useWallet hook)
   amount: number,
-  rpcUrl: string,
-  debugLog?: (msg: string) => void
+  rpcUrl: string
 ): Promise<PaymentResult> {
-  const log = debugLog || ((msg: string) => console.log(msg));
-  
   try {
-    log('💳 Processing payment in utils...');
-    log(`   Amount: $${amount} USDC`);
-    log(`   Wallet: ${publicKey.toBase58().slice(0, 8)}...`);
-    log(`   signTransaction exists: ${!!signTransaction}`);
-    log(`   signTransaction type: ${typeof signTransaction}`);
-    
-    // CRITICAL: Verify signTransaction function exists
-    if (!signTransaction) {
-      log('❌ signTransaction is undefined/null');
+    // Check if wallet is connected
+    if (!wallet || !wallet.publicKey) {
       return {
         success: false,
-        error: 'Wallet signing function not available. Please disconnect and reconnect your wallet.'
+        error: 'Wallet not connected'
       };
     }
     
-    if (typeof signTransaction !== 'function') {
-      log(`❌ signTransaction is not a function, type: ${typeof signTransaction}`);
-      return {
-        success: false,
-        error: 'Invalid wallet signing function. Please reconnect your wallet.'
-      };
-    }
+    console.log('💳 Processing payment...');
+    console.log(`   Amount: $${amount} USDC`);
+    console.log(`   Wallet: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
+    console.log(`   RPC: ${rpcUrl.slice(0, 50)}...`);
+    console.log('   Wallet capabilities:', {
+      sendTransaction: !!wallet.sendTransaction,
+      signAndSendTransaction: !!wallet.signAndSendTransaction,
+      signTransaction: !!wallet.signTransaction,
+      signAllTransactions: !!wallet.signAllTransactions
+    });
     
-    const connection = new Connection(rpcUrl, 'confirmed');
+    // Use polling instead of WebSocket (many RPC providers don't support WS)
+    const connection = new Connection(rpcUrl, {
+      commitment: 'confirmed',
+      disableRetryOnRateLimit: false,
+      confirmTransactionInitialTimeout: 60000, // 60 second timeout
+    });
     
-    log('🔨 Building transaction...');
+    console.log('🔧 Building transaction...');
     
-    // Get associated token accounts
+    // Get token accounts
     const fromTokenAccount = await getAssociatedTokenAddress(
       USDC_MINT,
-      publicKey
+      wallet.publicKey
     );
     
     const toTokenAccount = await getAssociatedTokenAddress(
@@ -62,99 +94,110 @@ export async function payEntryFee(
       PLATFORM_WALLET
     );
     
-    log(`   From: ${fromTokenAccount.toBase58().slice(0, 8)}...`);
-    log(`   To: ${toTokenAccount.toBase58().slice(0, 8)}...`);
+    console.log(`   From: ${fromTokenAccount.toBase58().slice(0, 8)}...`);
+    console.log(`   To: ${toTokenAccount.toBase58().slice(0, 8)}...`);
     
     // Convert USDC amount to smallest unit (6 decimals)
     const usdcAmount = Math.floor(amount * 1_000_000);
+    console.log(`   Amount: ${usdcAmount} (${amount} USDC)`);
     
-    // Create transfer instruction
-    const transferInstruction = createTransferInstruction(
-      fromTokenAccount,
-      toTokenAccount,
-      publicKey,
-      usdcAmount,
-      [],
-      TOKEN_PROGRAM_ID
-    );
+    // Get recent blockhash BEFORE building transaction
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
     
     // Create transaction
-    const transaction = new Transaction().add(transferInstruction);
-    transaction.feePayer = publicKey;
-    
-    // Get recent blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const transaction = new Transaction();
     transaction.recentBlockhash = blockhash;
-    transaction.lastValidBlockHeight = lastValidBlockHeight; // Important for mobile
+    transaction.feePayer = wallet.publicKey;
     
-    log('✅ Transaction constructed');
+    // Add transfer instruction
+    transaction.add(
+      createTransferInstruction(
+        fromTokenAccount,
+        toTokenAccount,
+        wallet.publicKey,
+        usdcAmount,
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
     
-    // ====================================
-    // Sign & Broadcast
-    // ====================================
-    log('✍️  CALLING signTransaction...');
-    log('   → PHANTOM SHOULD OPEN NOW');
+    console.log('✅ Transaction built successfully');
     
-    const signed = await signTransaction(transaction);
+    let signature: string;
     
-    log('✅ Transaction signed!');
-    log('📡 Broadcasting...');
-    
-    const signature = await connection.sendRawTransaction(signed.serialize());
-    
-    log(`✅ TX sent: ${signature.slice(0, 16)}...`);
+    // Use sendTransaction (wallet adapter standard - works for both mobile and desktop)
+    // The wallet adapter handles the differences between wallet types internally
+    try {
+      console.log('📱 Calling sendTransaction (wallet adapter handles signing)...');
+      console.log('   signTransaction exists:', !!wallet.signTransaction);
+      console.log('   sendTransaction exists:', !!wallet.sendTransaction);
+      
+      if (!wallet.sendTransaction) {
+        return {
+          success: false,
+          error: 'Wallet does not support sendTransaction'
+        };
+      }
+      
+      // CRITICAL: Pass transaction options for proper mobile wallet handling
+      // skipPreflight: false = validate transaction before sending
+      // preflightCommitment: 'confirmed' = use confirmed state for simulation
+      signature = await wallet.sendTransaction(transaction, connection, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+        maxRetries: 3
+      });
+      
+      console.log(`✅ Transaction sent! Signature: ${signature}`);
+    } catch (signError: any) {
+      console.error('❌ Transaction failed:', signError);
+      console.error('   Error type:', signError.constructor.name);
+      console.error('   Error message:', signError.message);
+      console.error('   Error stack:', signError.stack);
+      throw signError; // Re-throw to be caught by outer catch
+    }
     
     console.log(`✅ Transaction sent! Signature: ${signature}`);
     
-    // Wait for confirmation using polling (avoid WebSocket issues)
-    log('⏳ Confirming...');
+    // Use polling-based confirmation (no WebSocket)
+    const confirmResult = await confirmTransactionPolling(connection, signature, 60);
     
-    let confirmed = false;
-    const maxAttempts = 30;
-    
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const status = await connection.getSignatureStatus(signature);
-        
-        if (status?.value?.confirmationStatus === 'confirmed' || 
-            status?.value?.confirmationStatus === 'finalized') {
-          confirmed = true;
-          log(`✅ Confirmed! (${status.value.confirmationStatus})`);
-          break;
-        }
-        
-        if (status?.value?.err) {
-          throw new Error(`TX failed: ${JSON.stringify(status.value.err)}`);
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (err) {
-        // Silent retry
-      }
+    if (!confirmResult) {
+      // Return success with warning - user can verify manually
+      console.warn('⚠️ Confirmation timeout (payment likely succeeded)');
+      return {
+        success: true,
+        signature,
+        error: `Payment sent but confirmation timeout. Verify at: https://solscan.io/tx/${signature}`
+      };
     }
     
-    if (!confirmed) {
-      log('⚠️ Confirmation timeout (likely succeeded)');
-    }
+    console.log('✅ Payment confirmed!');
     
     return {
       success: true,
       signature
     };
   } catch (error: any) {
-    log(`❌ EXCEPTION: ${error.message || error}`);
-    log(`   Error type: ${error.constructor?.name || 'unknown'}`);
-    log(`   Stack: ${error.stack?.split('\n')[0] || 'no stack'}`);
+    console.error('❌ Payment failed:', error);
+    console.error('   Full error object:', JSON.stringify(error, null, 2));
     
-    // User-friendly error messages
+    // Parse common error messages
     let userMessage = error.message || 'Payment failed';
     
-    if (error.message?.includes('User rejected')) {
+    if (error.message?.includes('User rejected') || error.message?.includes('User declined')) {
       userMessage = 'Payment cancelled by user';
-    } else if (error.message?.includes('Insufficient funds')) {
+    } else if (error.message?.includes('Insufficient funds') || error.message?.includes('insufficient funds')) {
       userMessage = 'Insufficient SOL for transaction fee';
+    } else if (error.message?.includes('Missing signature') || error.message?.includes('Signature verification failed')) {
+      userMessage = 'Wallet signing error. Please try again or reconnect your wallet.';
     } else if (error.message?.includes('Blockhash not found')) {
       userMessage = 'Network congestion. Please try again.';
+    } else if (error.message?.includes('Transaction simulation failed')) {
+      userMessage = 'Transaction failed validation. Check your USDC balance and SOL for fees.';
+    } else if (error.name === 'WalletSignTransactionError') {
+      userMessage = 'Wallet signing failed. Please try again.';
     }
     
     return {

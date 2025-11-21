@@ -54,7 +54,7 @@ export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const { connected, walletAddress, disconnect, connect } = useWallet();
-  const { publicKey, signTransaction } = useSolanaWallet(); // For signing transactions
+  const solanaWallet = useSolanaWallet(); // For signing transactions
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
   const [playerName, setPlayerName] = useState('');
@@ -65,14 +65,6 @@ export default function HomePage() {
   const [isTokenGated, setIsTokenGated] = useState<boolean>(false);
   const [agarFiBalance, setAgarFiBalance] = useState<number>(0);
   const [checkingTokens, setCheckingTokens] = useState<boolean>(false);
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
-
-  // Debug logger for mobile
-  const addDebugLog = (message: string) => {
-    console.log(message);
-    setDebugLogs(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`].slice(-50));
-  };
 
   // Fetch username from database when wallet connects
   useEffect(() => {
@@ -624,59 +616,14 @@ export default function HomePage() {
         return;
       }
       
-      // Show toast for mobile users to approve in wallet
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      if (isMobile) {
-        setToastMessage('Check your wallet app to approve the payment...');
-        // Toast will auto-dismiss, don't set null yet
-      }
-      
-      // Verify wallet has signing capability
-      addDebugLog('🔍 Pre-payment validation START');
-      addDebugLog(`   publicKey: ${publicKey?.toBase58() || 'NULL'}`);
-      addDebugLog(`   signTransaction type: ${typeof signTransaction}`);
-      addDebugLog(`   signTransaction exists: ${!!signTransaction}`);
-      
-      if (!publicKey) {
-        addDebugLog('❌ PublicKey is null - BLOCKED');
-        setToastMessage('Wallet public key not found. Please reconnect.');
-        setPayingForTier(null);
-        setShowDebugPanel(true);
-        return;
-      }
-      
-      if (!signTransaction) {
-        addDebugLog('❌ signTransaction is null/undefined - BLOCKED');
-        setToastMessage('Wallet does not support signing. Please reconnect.');
-        setPayingForTier(null);
-        setShowDebugPanel(true);
-        return;
-      }
-      
       // Send payment
-      addDebugLog('✅ Validation passed');
-      addDebugLog('🔄 Calling payEntryFee...');
-      
-      const paymentResult = await payEntryFee(
-        publicKey,
-        signTransaction,
-        entryFee,
-        rpcUrl,
-        addDebugLog  // Pass debug logger
-      );
-      
-      addDebugLog(`📨 Payment result: ${paymentResult.success ? 'SUCCESS' : 'FAILED'}`);
+      const paymentResult = await payEntryFee(solanaWallet, entryFee, rpcUrl);
       
       if (!paymentResult.success) {
-        addDebugLog(`❌ Error: ${paymentResult.error}`);
         setToastMessage(`Payment failed: ${paymentResult.error}`);
         setPayingForTier(null);
-        setShowDebugPanel(true);
         return;
       }
-      
-      addDebugLog(`✅ Payment successful!`);
-      addDebugLog(`   TX: ${paymentResult.signature}`);
       
       // Update balance immediately (optimistic update)
       if (usdcBalance !== null) {
@@ -2097,40 +2044,6 @@ export default function HomePage() {
           </div>
         )}
       </AnimatePresence>
-
-      {/* Debug Panel Toggle (Mobile) */}
-      <button
-        onClick={() => setShowDebugPanel(!showDebugPanel)}
-        className="fixed bottom-24 left-4 z-50 w-12 h-12 bg-yellow-500 rounded-full shadow-2xl flex items-center justify-center font-bold text-black"
-      >
-        🐛
-      </button>
-
-      {/* Debug Panel (Mobile Console) */}
-      {showDebugPanel && (
-        <div className="fixed bottom-40 left-4 right-4 z-50 bg-black/95 border-2 border-yellow-500 rounded-xl p-4 max-h-96 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-yellow-500 font-bold">Debug Console</h3>
-            <button
-              onClick={() => setDebugLogs([])}
-              className="text-xs bg-red-500 text-white px-2 py-1 rounded"
-            >
-              Clear
-            </button>
-          </div>
-          <div className="space-y-1 font-mono text-xs">
-            {debugLogs.length === 0 ? (
-              <p className="text-gray-500">No logs yet...</p>
-            ) : (
-              debugLogs.map((log, i) => (
-                <div key={i} className="text-green-400 break-all">
-                  {log}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
     </main>
   );
 }
