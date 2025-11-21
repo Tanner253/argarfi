@@ -54,7 +54,7 @@ export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const { connected, walletAddress, disconnect, connect } = useWallet();
-  const solanaWallet = useSolanaWallet(); // For signing transactions
+  const { publicKey, signTransaction } = useSolanaWallet(); // For signing transactions
   const [gameModes, setGameModes] = useState<GameMode[]>([]);
   const [lobbies, setLobbies] = useState<LobbyStatus[]>([]);
   const [playerName, setPlayerName] = useState('');
@@ -623,24 +623,19 @@ export default function HomePage() {
         // Toast will auto-dismiss, don't set null yet
       }
       
-      // Send payment
-      console.log('🔄 Initiating payment from page...');
-      console.log('   Wallet:', {
-        publicKey: solanaWallet.publicKey?.toBase58(),
-        connected: solanaWallet.connected,
-        hasSignTransaction: !!solanaWallet.signTransaction
-      });
-      
-      // Verify signTransaction exists
-      if (!solanaWallet.signTransaction) {
-        setToastMessage('Wallet does not support signing. Please reconnect your wallet.');
+      // Verify wallet has signing capability
+      if (!publicKey || !signTransaction) {
+        setToastMessage('Wallet not ready. Please reconnect your wallet.');
         setPayingForTier(null);
         return;
       }
       
+      // Send payment
+      console.log('🔄 Starting payment...');
+      
       const paymentResult = await payEntryFee(
-        solanaWallet.publicKey!,
-        solanaWallet.signTransaction,
+        publicKey,
+        signTransaction,
         entryFee,
         rpcUrl
       );
