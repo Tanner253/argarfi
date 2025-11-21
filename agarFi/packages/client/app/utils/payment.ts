@@ -1,5 +1,11 @@
 import { Connection, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
-import { getAssociatedTokenAddress, createTransferInstruction, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { 
+  getAssociatedTokenAddress, 
+  createTransferInstruction, 
+  createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID 
+} from '@solana/spl-token';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const PLATFORM_WALLET = new PublicKey('FcAENdG4t6muicnVTUrBkgvysGKqLY3rykCGMc1jzPoP');
@@ -100,7 +106,11 @@ export async function payEntryFee(
     const usdcAmount = Math.floor(amount * 1_000_000);
     console.log(`   Amount: ${usdcAmount} (${amount} USDC)`);
     
-    // Get recent blockhash BEFORE building transaction
+    // Check if destination token account exists
+    console.log('🔍 Checking destination token account...');
+    const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
+    
+    // Get recent blockhash
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
     console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
     
@@ -108,6 +118,23 @@ export async function payEntryFee(
     const transaction = new Transaction();
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = wallet.publicKey;
+    
+    // If destination ATA doesn't exist, create it first (mobile wallets need this)
+    if (!toAccountInfo) {
+      console.log('📝 Destination ATA does not exist - adding create instruction');
+      transaction.add(
+        createAssociatedTokenAccountInstruction(
+          wallet.publicKey, // payer
+          toTokenAccount, // ata
+          PLATFORM_WALLET, // owner
+          USDC_MINT, // mint
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      );
+    } else {
+      console.log('✅ Destination ATA exists');
+    }
     
     // Add transfer instruction
     transaction.add(
@@ -130,7 +157,13 @@ export async function payEntryFee(
       // Method 1: sendTransaction (preferred for mobile - wallet handles everything)
       if (wallet.sendTransaction) {
         console.log('📱 Using sendTransaction (wallet handles signing + sending)');
-        signature = await wallet.sendTransaction(transaction, connection);
+        
+        // Send with options optimized for mobile wallets
+        signature = await wallet.sendTransaction(transaction, connection, {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+          maxRetries: 3,
+        });
         console.log(`✅ Wallet broadcast transaction: ${signature}`);
       }
       // Method 2: signAndSendTransaction (some mobile wallets)
@@ -145,9 +178,9 @@ export async function payEntryFee(
         console.log('🖥️  Using signTransaction (desktop wallet - manual send)');
         const signed = await wallet.signTransaction(transaction);
         signature = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+          skipPreflight: false,
+          maxRetries: 3,
+        });
         console.log(`✅ Transaction broadcast: ${signature}`);
       } 
       else {
@@ -188,14 +221,16 @@ export async function payEntryFee(
     // Parse common error messages
     let userMessage = error.message || 'Payment failed';
     
-    if (error.message?.includes('User rejected')) {
+    if (error.message?.includes('User rejected') || error.message?.includes('User denied')) {
       userMessage = 'Payment cancelled by user';
-    } else if (error.message?.includes('Insufficient funds')) {
+    } else if (error.message?.includes('Insufficient funds') || error.message?.includes('insufficient lamports')) {
       userMessage = 'Insufficient SOL for transaction fee';
-    } else if (error.message?.includes('Missing signature')) {
-      userMessage = 'Wallet signing error. Please try reconnecting your wallet.';
+    } else if (error.message?.includes('Missing signature') || error.message?.includes('Signature verification failed')) {
+      userMessage = 'Transaction signing failed. Please try again or use a different wallet.';
     } else if (error.message?.includes('Blockhash not found')) {
       userMessage = 'Network congestion. Please try again.';
+    } else if (error.message?.includes('WalletSendTransactionError')) {
+      userMessage = 'Mobile wallet error. Please ensure you have the latest wallet version.';
     }
     
     return {
