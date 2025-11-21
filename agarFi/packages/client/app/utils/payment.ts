@@ -1,19 +1,5 @@
-import { 
-  Connection, 
-  PublicKey, 
-  Transaction, 
-  TransactionMessage,
-  VersionedTransaction,
-  SystemProgram, 
-  sendAndConfirmTransaction 
-} from '@solana/web3.js';
-import { 
-  getAssociatedTokenAddress, 
-  createTransferInstruction, 
-  createAssociatedTokenAccountInstruction,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID 
-} from '@solana/spl-token';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { getAssociatedTokenAddress, createTransferInstruction, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 const PLATFORM_WALLET = new PublicKey('FcAENdG4t6muicnVTUrBkgvysGKqLY3rykCGMc1jzPoP');
@@ -71,6 +57,7 @@ export async function payEntryFee(
   try {
     // Check if wallet is connected
     if (!wallet || !wallet.publicKey) {
+      console.error('❌ Wallet not connected or missing publicKey');
       return {
         success: false,
         error: 'Wallet not connected'
@@ -79,12 +66,12 @@ export async function payEntryFee(
     
     console.log('💳 Processing payment...');
     console.log(`   Amount: $${amount} USDC`);
-    console.log(`   Wallet: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
-    console.log('   Wallet capabilities:', {
+    console.log(`   Wallet Address: ${wallet.publicKey.toBase58().slice(0, 8)}...`);
+    console.log(`   Wallet Type: ${wallet.adapter?.name || wallet.wallet?.adapter?.name || 'Unknown'}`);
+    console.log(`   User Agent: ${navigator.userAgent.slice(0, 50)}...`);
+    console.log('   Methods available:', {
       sendTransaction: !!wallet.sendTransaction,
-      signAndSendTransaction: !!wallet.signAndSendTransaction,
       signTransaction: !!wallet.signTransaction,
-      signAllTransactions: !!wallet.signAllTransactions
     });
     
     // Use polling instead of WebSocket (many RPC providers don't support WS)
@@ -114,32 +101,17 @@ export async function payEntryFee(
     const usdcAmount = Math.floor(amount * 1_000_000);
     console.log(`   Amount: ${usdcAmount} (${amount} USDC)`);
     
-    // Check if destination token account exists
-    console.log('🔍 Checking destination token account...');
-    const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
+    // Get latest blockhash
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
     
-    // Build instructions array
-    const instructions = [];
+    // Create simple Legacy Transaction (works on ALL wallets - mobile and desktop)
+    const transaction = new Transaction();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = wallet.publicKey;
     
-    // If destination ATA doesn't exist, create it first
-    if (!toAccountInfo) {
-      console.log('📝 Destination ATA does not exist - adding create instruction');
-      instructions.push(
-        createAssociatedTokenAccountInstruction(
-          wallet.publicKey, // payer
-          toTokenAccount, // ata
-          PLATFORM_WALLET, // owner
-          USDC_MINT, // mint
-          TOKEN_PROGRAM_ID,
-          ASSOCIATED_TOKEN_PROGRAM_ID
-        )
-      );
-    } else {
-      console.log('✅ Destination ATA exists');
-    }
-    
-    // Add transfer instruction
-    instructions.push(
+    // Add USDC transfer instruction
+    transaction.add(
       createTransferInstruction(
         fromTokenAccount,
         toTokenAccount,
@@ -150,73 +122,36 @@ export async function payEntryFee(
       )
     );
     
-    // Get latest blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
-    
-    // Detect if we're on mobile (ALL mobile wallets prefer Legacy Transactions)
-    const isMobileDevice = typeof window !== 'undefined' && 
-                          /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    
-    console.log(`   Device: ${isMobileDevice ? 'Mobile' : 'Desktop'}`);
-    console.log(`   Wallet: ${wallet.adapter?.name || wallet.constructor?.name || 'Unknown'}`);
-    
-    // ALWAYS use Legacy Transaction on mobile for maximum compatibility
-    const transaction = new Transaction();
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = wallet.publicKey;
-    transaction.lastValidBlockHeight = lastValidBlockHeight;
-    
-    // Add all instructions
-    instructions.forEach(ix => transaction.add(ix));
-    
-    console.log(`✅ Transaction built (Legacy format for mobile compatibility)`);
+    console.log(`✅ Transaction built successfully`);
     
     let signature: string;
     
-    // Try different signing methods based on wallet capabilities
+    // Send transaction using wallet adapter
     try {
-      // Method 1: sendTransaction (preferred for all wallets)
-      if (wallet.sendTransaction) {
-        console.log('📱 Using sendTransaction method');
-        console.log('⏳ Opening wallet for approval... (check your wallet app)');
-        
-        // Send transaction with proper options
-        signature = await wallet.sendTransaction(transaction, connection, {
-          skipPreflight: false, // Run preflight checks
-          preflightCommitment: 'confirmed',
-        });
-        console.log(`✅ Transaction sent! Signature: ${signature.slice(0, 20)}...`);
+      if (!wallet.sendTransaction) {
+        throw new Error('Wallet does not support sendTransaction method');
       }
-      // Method 2: signTransaction (fallback - sign then send)
-      else if (wallet.signTransaction) {
-        console.log('🖥️  Using signTransaction method');
-        console.log('⏳ Opening wallet for approval...');
-        
-        const signed = await wallet.signTransaction(transaction);
-        console.log('✍️  Transaction signed by user, broadcasting to network...');
-        
-        // Serialize and send (handle both transaction types)
-        const rawTransaction = signed.serialize();
-        signature = await connection.sendRawTransaction(rawTransaction, {
-          skipPreflight: false,
-          maxRetries: 3,
-        });
-        console.log(`✅ Transaction broadcast! Signature: ${signature.slice(0, 20)}...`);
-      } 
-      else {
-        return {
-          success: false,
-          error: 'Wallet does not support transaction signing'
-        };
-      }
+      
+      console.log('💳 Calling wallet.sendTransaction...');
+      console.log('⏳ Opening wallet for approval... (check your mobile wallet app)');
+      console.log(`   Transaction instructions: ${transaction.instructions.length}`);
+      console.log(`   Fee payer: ${transaction.feePayer?.toBase58().slice(0, 8)}...`);
+      
+      // Use sendTransaction - wallet handles signing and broadcasting
+      signature = await wallet.sendTransaction(transaction, connection);
+      
+      console.log(`✅ Wallet returned signature: ${signature}`);
     } catch (signError: any) {
-      console.error('❌ Signing/sending failed:', signError);
-      console.error('Error details:', {
-        name: signError.name,
-        message: signError.message,
-        code: signError.code
-      });
+      console.error('❌ wallet.sendTransaction threw error:', signError);
+      console.error('   Error name:', signError.name);
+      console.error('   Error message:', signError.message);
+      console.error('   Error code:', signError.code);
+      
+      // Log full error object for debugging
+      if (signError.logs) {
+        console.error('   Transaction logs:', signError.logs);
+      }
+      
       throw signError; // Re-throw to be caught by outer catch
     }
     

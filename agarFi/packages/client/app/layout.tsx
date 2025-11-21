@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { SolanaWalletProvider } from "./components/WalletProvider";
-import { DebugConsole } from "./components/DebugConsole";
+// import { DebugConsole } from "./components/DebugConsole"; // Hidden - uncomment for debugging
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,7 +21,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <SolanaWalletProvider>
           {children}
-          <DebugConsole />
+          {/* <DebugConsole /> */}
         </SolanaWalletProvider>
       </body>
     </html>
