@@ -1,4 +1,12 @@
-import { Connection, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
+import { 
+  Connection, 
+  PublicKey, 
+  Transaction, 
+  TransactionMessage,
+  VersionedTransaction,
+  SystemProgram, 
+  sendAndConfirmTransaction 
+} from '@solana/web3.js';
 import { 
   getAssociatedTokenAddress, 
   createTransferInstruction, 
@@ -110,19 +118,13 @@ export async function payEntryFee(
     console.log('🔍 Checking destination token account...');
     const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
     
-    // Get recent blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-    console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
+    // Build instructions array
+    const instructions = [];
     
-    // Create transaction
-    const transaction = new Transaction();
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = wallet.publicKey;
-    
-    // If destination ATA doesn't exist, create it first (mobile wallets need this)
+    // If destination ATA doesn't exist, create it first
     if (!toAccountInfo) {
       console.log('📝 Destination ATA does not exist - adding create instruction');
-      transaction.add(
+      instructions.push(
         createAssociatedTokenAccountInstruction(
           wallet.publicKey, // payer
           toTokenAccount, // ata
@@ -137,7 +139,7 @@ export async function payEntryFee(
     }
     
     // Add transfer instruction
-    transaction.add(
+    instructions.push(
       createTransferInstruction(
         fromTokenAccount,
         toTokenAccount,
@@ -148,40 +150,50 @@ export async function payEntryFee(
       )
     );
     
+    // Get latest blockhash for VersionedTransaction
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    console.log(`   Blockhash: ${blockhash.slice(0, 8)}...`);
+    
+    // Create VersionedTransaction (better mobile wallet support)
+    const messageV0 = new TransactionMessage({
+      payerKey: wallet.publicKey,
+      recentBlockhash: blockhash,
+      instructions: instructions,
+    }).compileToV0Message();
+    
+    const transaction = new VersionedTransaction(messageV0);
+    
     console.log('✅ Transaction built successfully');
     
     let signature: string;
     
     // Try different signing methods based on wallet capabilities
     try {
-      // Method 1: sendTransaction (preferred for mobile - wallet handles everything)
+      // Method 1: sendTransaction (preferred - works with VersionedTransaction)
       if (wallet.sendTransaction) {
-        console.log('📱 Using sendTransaction (wallet handles signing + sending)');
+        console.log('📱 Using sendTransaction (VersionedTransaction for mobile compatibility)');
         
-        // Send with options optimized for mobile wallets
+        // Send VersionedTransaction with optimized options
         signature = await wallet.sendTransaction(transaction, connection, {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
           maxRetries: 3,
         });
-        console.log(`✅ Wallet broadcast transaction: ${signature}`);
+        console.log(`✅ Transaction sent! Signature: ${signature.slice(0, 20)}...`);
       }
-      // Method 2: signAndSendTransaction (some mobile wallets)
-      else if (wallet.signAndSendTransaction) {
-        console.log('📱 Using signAndSendTransaction (mobile wallet)');
-        const result = await wallet.signAndSendTransaction(transaction);
-        signature = typeof result === 'string' ? result : result.signature;
-        console.log(`✅ Wallet broadcast transaction: ${signature}`);
-      } 
-      // Method 3: signTransaction (desktop wallets - manual send)
+      // Method 2: signTransaction (fallback - sign then send)
       else if (wallet.signTransaction) {
-        console.log('🖥️  Using signTransaction (desktop wallet - manual send)');
+        console.log('🖥️  Using signTransaction (manual send)');
         const signed = await wallet.signTransaction(transaction);
-        signature = await connection.sendRawTransaction(signed.serialize(), {
+        
+        // Serialize and send
+        const rawTransaction = signed.serialize();
+        signature = await connection.sendRawTransaction(rawTransaction, {
           skipPreflight: false,
+          preflightCommitment: 'confirmed',
           maxRetries: 3,
         });
-        console.log(`✅ Transaction broadcast: ${signature}`);
+        console.log(`✅ Transaction sent! Signature: ${signature.slice(0, 20)}...`);
       } 
       else {
         return {
@@ -191,10 +203,13 @@ export async function payEntryFee(
       }
     } catch (signError: any) {
       console.error('❌ Signing/sending failed:', signError);
+      console.error('Error details:', {
+        name: signError.name,
+        message: signError.message,
+        code: signError.code
+      });
       throw signError; // Re-throw to be caught by outer catch
     }
-    
-    console.log(`✅ Transaction sent! Signature: ${signature}`);
     
     // Use polling-based confirmation (no WebSocket)
     const confirmResult = await confirmTransactionPolling(connection, signature, 60);
