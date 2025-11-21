@@ -893,6 +893,9 @@ io.on('connection', (socket) => {
           
           console.log(`💸 Processing refund for ${playerName} (game not started)`);
           
+          // Mark as refunded IMMEDIATELY (before async refund starts) to prevent double refund
+          refundedPlayers.add(playerId);
+          
           const refundResult = await entryFeeService.refundEntryFee(
             playerId,
             playerName,
@@ -903,9 +906,6 @@ io.on('connection', (socket) => {
           );
           
           if (refundResult.success) {
-            // Mark as refunded to prevent double refund on disconnect
-            refundedPlayers.add(playerId);
-            
             socket.emit('refundProcessed', { amount: entryFee, tx: refundResult.txSignature });
             
             // Remove from lobby pot
@@ -913,6 +913,9 @@ io.on('connection', (socket) => {
           } else {
             console.error(`❌ Refund failed: ${refundResult.error}`);
             socket.emit('refundFailed', { error: refundResult.error });
+            
+            // Remove from refunded set if refund failed
+            refundedPlayers.delete(playerId);
           }
         }
       }
@@ -1066,6 +1069,9 @@ io.on('connection', (socket) => {
           
           console.log(`💸 Auto-refund on disconnect: ${playerName} ($${entryFee})`);
           
+          // Mark as refunded IMMEDIATELY to prevent race conditions
+          refundedPlayers.add(playerIdToRemove);
+          
           const refundResult = await entryFeeService.refundEntryFee(
             playerIdToRemove,
             playerName,
@@ -1076,13 +1082,13 @@ io.on('connection', (socket) => {
           );
           
           if (refundResult.success) {
-            // Mark as refunded
-            refundedPlayers.add(playerIdToRemove);
-            
             // Remove from lobby pot
             lobbyManager.removeFromPot(tier, entryFee);
           } else {
             console.error(`❌ Auto-refund failed for ${playerName}: ${refundResult.error}`);
+            
+            // Remove from refunded set if refund failed
+            refundedPlayers.delete(playerIdToRemove);
           }
         }
       } else if (refundedPlayers.has(playerIdToRemove)) {
