@@ -15,7 +15,7 @@ export const HypeVideoBanner = memo(function HypeVideoBanner() {
   }, []);
 
   return (
-    <div className="w-full h-[250px] md:h-[400px] lg:h-[500px] relative overflow-hidden mb-8 bg-black border-b border-neon-green/20 group">
+    <div className="w-full h-[300px] md:h-[500px] lg:h-[600px] xl:h-[700px] relative overflow-hidden mb-8 bg-black border-b border-neon-green/20 group">
       <video
         ref={videoRef}
         src="/hype.mp4"
