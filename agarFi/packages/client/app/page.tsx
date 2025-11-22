@@ -10,6 +10,9 @@ import { Leaderboard } from './components/Leaderboard';
 import { SwapModal } from './components/SwapModal';
 import { payEntryFee, checkUSDCBalance } from './utils/payment';
 import { checkAgarFiTokenBalance } from './lib/tokenGating';
+import { createPaymentPayload, encodePaymentPayload, type PaymentRequiredResponse } from './lib/x402';
+import { signChallenge, encodeAuthHeader, type AuthRequiredResponse, type AuthChallenge } from './lib/x403';
+import { AuthModal } from './components/AuthModal';
 
 interface GameMode {
   tier: string;
@@ -65,6 +68,14 @@ export default function HomePage() {
   const [isTokenGated, setIsTokenGated] = useState<boolean>(false);
   const [agarFiBalance, setAgarFiBalance] = useState<number>(0);
   const [checkingTokens, setCheckingTokens] = useState<boolean>(false);
+  
+  // x403 Authentication State
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authChallenge, setAuthChallenge] = useState<AuthChallenge | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [pendingAuthCallback, setPendingAuthCallback] = useState<(() => void) | null>(null);
 
   // Fetch username from database when wallet connects
   useEffect(() => {
@@ -143,6 +154,46 @@ export default function HomePage() {
       isMounted = false;
     };
   }, [connected, walletAddress, showSwapModal]); // Re-check when swap modal closes
+
+  // Load x403 session token from localStorage on mount
+  useEffect(() => {
+    const storedToken = localStorage.getItem('x403SessionToken');
+    if (storedToken) {
+      setSessionToken(storedToken);
+      console.log('✅ x403: Session token loaded from localStorage');
+    }
+  }, []);
+
+  // Clear x403 session when wallet disconnects
+  useEffect(() => {
+    if (!connected) {
+      const token = sessionToken;
+      const wallet = walletAddress;
+
+      // Clear client-side state immediately
+      setSessionToken(null);
+      localStorage.removeItem('x403SessionToken');
+      localStorage.removeItem('x403SessionExpiry');
+      console.log('🧹 x403: Session cleared (wallet disconnected)');
+
+      // Invalidate server-side session
+      if (token || wallet) {
+        const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+        
+        fetch(`${serverUrl}/api/auth/logout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            walletAddress: wallet,
+            sessionToken: token
+          })
+        }).catch(err => {
+          console.warn('⚠️ x403: Failed to invalidate server session:', err);
+          // Silent fail - client-side clearing is sufficient
+        });
+      }
+    }
+  }, [connected, walletAddress, sessionToken]);
 
   // Fetch USDC balance when wallet connects
   useEffect(() => {
@@ -503,6 +554,178 @@ export default function HomePage() {
     }
   };
 
+  /**
+   * x403 Authentication Flow
+   * Ensures user has valid session token before allowing game actions
+   */
+  const authenticate = async (): Promise<boolean> => {
+    if (!connected || !walletAddress) {
+      setToastMessage('Please connect your wallet');
+      return false;
+    }
+
+    const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+
+    // Check if we have a valid session token
+    const storedToken = localStorage.getItem('x403SessionToken');
+    const storedExpiry = localStorage.getItem('x403SessionExpiry');
+
+    if (storedToken && storedExpiry) {
+      const expiryTime = parseInt(storedExpiry);
+      
+      if (Date.now() < expiryTime) {
+        console.log('✅ x403: Using existing session token');
+        setSessionToken(storedToken);
+        return true;
+      } else {
+        console.log('⏰ x403: Session expired, need new signature');
+        localStorage.removeItem('x403SessionToken');
+        localStorage.removeItem('x403SessionExpiry');
+      }
+    }
+
+    // Need new authentication - request challenge
+    try {
+      console.log('📋 x403: Requesting authentication challenge...');
+      
+      const challengeResponse = await fetch(`${serverUrl}/api/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress })
+      });
+
+      // Check for rate limiting
+      if (challengeResponse.status === 429) {
+        const rateLimitData = await challengeResponse.json();
+        setToastMessage(rateLimitData.error || 'Too many failed attempts. Please wait.');
+        return false;
+      }
+
+      // Check for existing session
+      if (challengeResponse.ok) {
+        const data = await challengeResponse.json();
+        
+        if (data.existingSession) {
+          console.log('✅ x403: Server found existing session');
+          setSessionToken(data.sessionToken);
+          localStorage.setItem('x403SessionToken', data.sessionToken);
+          localStorage.setItem('x403SessionExpiry', new Date(data.expiresAt).getTime().toString());
+          return true;
+        }
+      }
+
+      // Get challenge (403 response expected)
+      if (challengeResponse.status !== 403) {
+        throw new Error('Expected 403 Forbidden with challenge');
+      }
+
+      const authRequired: AuthRequiredResponse = await challengeResponse.json();
+      
+      console.log('✅ x403: Challenge received');
+      setAuthChallenge(authRequired.challenge);
+      setAuthError(null);
+
+      // Show modal and wait for user to sign
+      return new Promise((resolve) => {
+        setShowAuthModal(true);
+        
+        // Store callback to resume after signing
+        setPendingAuthCallback(() => async () => {
+          try {
+            setIsAuthenticating(true);
+            setAuthError(null);
+
+            // Sign challenge
+            const signResult = await signChallenge(authRequired.challenge, solanaWallet);
+
+            if (!signResult.success) {
+              setAuthError(signResult.error || 'Signing failed');
+              setIsAuthenticating(false);
+              resolve(false);
+              return;
+            }
+
+            // Send signed challenge to server
+            console.log('📨 x403: Sending signed challenge to server...');
+            
+            const authHeader = encodeAuthHeader(signResult.signedChallenge!);
+
+            const verifyResponse = await fetch(`${serverUrl}/api/auth/verify`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': authHeader
+              },
+              body: JSON.stringify({ walletAddress })
+            });
+
+            if (verifyResponse.status === 429) {
+              const rateLimitData = await verifyResponse.json();
+              setAuthError(rateLimitData.error || 'Too many failed attempts');
+              setIsAuthenticating(false);
+              resolve(false);
+              return;
+            }
+
+            if (!verifyResponse.ok) {
+              const errorData = await verifyResponse.json();
+              setAuthError(errorData.error || 'Verification failed');
+              setIsAuthenticating(false);
+              resolve(false);
+              return;
+            }
+
+            const verifyData = await verifyResponse.json();
+
+            if (!verifyData.authenticated || !verifyData.sessionToken) {
+              setAuthError('Authentication failed');
+              setIsAuthenticating(false);
+              resolve(false);
+              return;
+            }
+
+            console.log('✅ x403: Authentication successful!');
+            
+            // Store session token
+            setSessionToken(verifyData.sessionToken);
+            localStorage.setItem('x403SessionToken', verifyData.sessionToken);
+            localStorage.setItem('x403SessionExpiry', new Date(verifyData.expiresAt).getTime().toString());
+
+            setShowAuthModal(false);
+            setIsAuthenticating(false);
+            setAuthChallenge(null);
+            setToastMessage('✅ Wallet verified successfully!');
+            
+            resolve(true);
+          } catch (error: any) {
+            console.error('❌ x403 authentication error:', error);
+            setAuthError(error.message || 'Authentication failed');
+            setIsAuthenticating(false);
+            resolve(false);
+          }
+        });
+      });
+    } catch (error: any) {
+      console.error('❌ x403 challenge request failed:', error);
+      setToastMessage(`Authentication error: ${error.message}`);
+      return false;
+    }
+  };
+
+  const handleAuthSign = () => {
+    if (pendingAuthCallback) {
+      pendingAuthCallback();
+    }
+  };
+
+  const handleAuthCancel = () => {
+    setShowAuthModal(false);
+    setAuthChallenge(null);
+    setAuthError(null);
+    setIsAuthenticating(false);
+    setPendingAuthCallback(null);
+  };
+
   const joinLobby = async (tier: string) => {
     // Require wallet connection
     if (!connected) {
@@ -521,7 +744,18 @@ export default function HomePage() {
       return;
     }
 
-    // Token gating check #2 - Fresh balance check before joining (prevent sell-and-play)
+    // x403 AUTHENTICATION (Step 1 - BEFORE everything else)
+    console.log('🔐 x403: Checking authentication...');
+    const isAuthenticated = await authenticate();
+    
+    if (!isAuthenticated) {
+      console.log('❌ x403: Authentication failed or cancelled');
+      return;
+    }
+
+    console.log('✅ x403: Authenticated successfully');
+
+    // Token gating check #2 - Fresh balance check after auth
     console.log('🔒 Re-verifying token balance before joining lobby...');
     try {
       const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
@@ -567,14 +801,46 @@ export default function HomePage() {
       // Process payment
       await handlePaymentAndJoin(tier, gameMode.buyIn);
     } else {
-      // Free tier (Dream Mode) - join directly
-      const playerId = `player_${Date.now()}`;
-      localStorage.setItem('playerId', playerId);
-      localStorage.setItem('playerName', playerName);
-      localStorage.setItem('selectedTier', tier);
-      localStorage.setItem('playerWallet', walletAddress || '');
-      
-      router.push('/game');
+      // Free tier (Dream Mode) - use x402 to get lobby token (no payment)
+      try {
+        const playerId = `player_${Date.now()}`;
+        const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+
+        console.log('🎟️  Requesting free lobby token for Dream Mode...');
+
+        const response = await fetch(`${serverUrl}/api/join-lobby`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-SESSION': sessionToken || '' // x403 session token
+          },
+          body: JSON.stringify({
+            tier,
+            playerId,
+            playerName,
+            walletAddress
+          })
+        });
+
+        const result = await response.json();
+
+        if (!result.success || !result.lobbyToken) {
+          setToastMessage(`Failed to join: ${result.error || 'Unknown error'}`);
+          return;
+        }
+
+        console.log('✅ Free lobby token received');
+
+        localStorage.setItem('playerId', playerId);
+        localStorage.setItem('playerName', playerName);
+        localStorage.setItem('selectedTier', tier);
+        localStorage.setItem('playerWallet', walletAddress || '');
+        localStorage.setItem('lobbyToken', result.lobbyToken);
+        
+        router.push('/game');
+      } catch (error: any) {
+        setToastMessage(`Error joining lobby: ${error.message}`);
+      }
     }
   };
   
@@ -583,6 +849,7 @@ export default function HomePage() {
     
     try {
       const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC;
+      const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
       
       if (!rpcUrl) {
         setToastMessage('RPC endpoint not configured. Please add NEXT_PUBLIC_SOLANA_RPC to .env');
@@ -590,11 +857,10 @@ export default function HomePage() {
         return;
       }
 
-      // Token gating check #2 - Fresh balance check before payment (prevent sell-and-play)
+      // Token gating check - Fresh balance check before payment
       console.log('🔒 Re-verifying token balance before payment...');
       const freshCheck = await checkAgarFiTokenBalance(walletAddress!, rpcUrl);
       
-      // Update cached values
       setIsTokenGated(freshCheck.meetsRequirement);
       setAgarFiBalance(freshCheck.total);
       
@@ -615,8 +881,50 @@ export default function HomePage() {
         setPayingForTier(null);
         return;
       }
+
+      const playerId = `player_${Date.now()}`;
+
+      // ====================================
+      // x402 PROTOCOL - Step 1: Request Payment Requirements
+      // ====================================
+      console.log('📋 x402 Step 1: Requesting payment requirements...');
       
-      // Send payment
+      let paymentRequired: PaymentRequiredResponse;
+      
+      try {
+        const initialResponse = await fetch(`${serverUrl}/api/join-lobby`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-SESSION': sessionToken || '' // x403 session token
+          },
+          body: JSON.stringify({
+            tier,
+            playerId,
+            playerName,
+            walletAddress
+          })
+        });
+
+        if (initialResponse.status === 402) {
+          paymentRequired = await initialResponse.json();
+          console.log('✅ Got 402 Payment Required response');
+          console.log(`   Amount: $${parseInt(paymentRequired.accepts[0].maxAmountRequired) / 1_000_000} USDC`);
+          console.log(`   Pay to: ${paymentRequired.accepts[0].payTo.slice(0, 8)}...`);
+        } else {
+          throw new Error('Expected 402 Payment Required response');
+        }
+      } catch (err: any) {
+        setToastMessage(`x402 error: ${err.message}`);
+        setPayingForTier(null);
+        return;
+      }
+
+      // ====================================
+      // x402 PROTOCOL - Step 2: Make Payment On-Chain
+      // ====================================
+      console.log('💳 x402 Step 2: Processing USDC payment...');
+      
       const paymentResult = await payEntryFee(solanaWallet, entryFee, rpcUrl);
       
       if (!paymentResult.success) {
@@ -624,23 +932,66 @@ export default function HomePage() {
         setPayingForTier(null);
         return;
       }
-      
-      // Update balance immediately (optimistic update)
+
+      console.log(`✅ Payment successful: ${paymentResult.signature}`);
+
+      // Update balance (optimistic)
       if (usdcBalance !== null) {
         setUsdcBalance(usdcBalance - entryFee);
       }
-      
-      // Payment confirmed - join lobby
-      const playerId = `player_${Date.now()}`;
+
+      // ====================================
+      // x402 PROTOCOL - Step 3: Retry with X-PAYMENT Header
+      // ====================================
+      console.log('📨 x402 Step 3: Sending payment proof to server...');
+
+      const paymentPayload = createPaymentPayload(
+        paymentResult.signature!,
+        walletAddress!,
+        paymentRequired.accepts[0].payTo,
+        entryFee,
+        paymentRequired.accepts[0].asset
+      );
+
+      const xPaymentHeader = encodePaymentPayload(paymentPayload);
+
+      const verifyResponse = await fetch(`${serverUrl}/api/join-lobby`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-SESSION': sessionToken || '', // x403 session token
+          'X-PAYMENT': xPaymentHeader // x402 payment proof
+        },
+        body: JSON.stringify({
+          tier,
+          playerId,
+          playerName,
+          walletAddress
+        })
+      });
+
+      const verifyResult = await verifyResponse.json();
+
+      if (!verifyResponse.ok || !verifyResult.success) {
+        setToastMessage(`Payment verification failed: ${verifyResult.error || 'Unknown error'}`);
+        setPayingForTier(null);
+        return;
+      }
+
+      console.log('✅ x402 payment verified! Lobby token received');
+
+      // Store verified lobby token
       localStorage.setItem('playerId', playerId);
       localStorage.setItem('playerName', playerName);
       localStorage.setItem('selectedTier', tier);
       localStorage.setItem('playerWallet', walletAddress || '');
       localStorage.setItem('entryPaymentTx', paymentResult.signature || '');
+      localStorage.setItem('lobbyToken', verifyResult.lobbyToken); // JWT token for Socket.io
       
       router.push('/game');
       
     } catch (error: any) {
+      console.error('❌ x402 payment error:', error);
       setToastMessage(`Payment error: ${error.message}`);
     } finally {
       setPayingForTier(null);
@@ -1955,6 +2306,16 @@ export default function HomePage() {
         onClose={() => setShowSwapModal(false)}
         currentBalance={agarFiBalance}
         requiredBalance={100000}
+      />
+
+      {/* x403 Authentication Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onSign={handleAuthSign}
+        onCancel={handleAuthCancel}
+        isLoading={isAuthenticating}
+        error={authError}
+        challengeMessage={authChallenge?.message}
       />
 
       {/* Leaderboard Modal */}

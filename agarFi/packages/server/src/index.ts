@@ -17,10 +17,19 @@ import { User } from './models/User.js';
 import { BannedIP } from './models/BannedIP.js';
 import { ChatMessage } from './models/ChatMessage.js';
 import { DreamTimer } from './models/DreamTimer.js';
+import { createPaymentRequired, extractPaymentHeader, decodePaymentPayload, validatePaymentPayload } from './lib/x402.js';
+import type { LobbyAccessToken } from './types/x402.js';
+import { createAuthRequired, verifySignature, decodeAuthHeader, isRateLimited, recordAuthFailure, clearRateLimit, createSessionToken, verifySessionToken } from './lib/x403.js';
+import type { SignedChallenge } from './types/x403.js';
+import { AuthSession } from './models/AuthSession.js';
+import jwt from 'jsonwebtoken';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// JWT Secret for session tokens (x403/x402)
+const JWT_SECRET = process.env.JWT_SECRET || 'agarfi-dev-secret-change-in-production';
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -70,6 +79,16 @@ connectDB()
     // Ensure connection is fully established
     if (mongoose.connection.readyState === 1) {
       dbReady = true;
+
+      // Clear all x403 authentication sessions on server restart (fresh state)
+      try {
+        const deletedSessions = await (AuthSession as any).deleteMany({});
+        console.log(`🧹 x403: Cleared ${deletedSessions.deletedCount || 0} authentication sessions (server restart)`);
+        console.log('   All users must re-authenticate with wallet signature on next join');
+      } catch (error) {
+        console.warn('⚠️ x403: Could not clear sessions on startup:', error);
+      }
+
       // Initialize LobbyManager (loads Dream timer from DB)
       await lobbyManager.initialize();
     } else {
@@ -226,6 +245,14 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
             console.log('║ 🏦 DISPOSITION: Returned to treasury (no human winners)    ║');
             console.log('║ 💰 Platform:    +$' + totalPot.toFixed(2).padStart(40) + ' ║');
             console.log('╚════════════════════════════════════════════════════════════╝\n');
+            
+            // CRITICAL: Clear payment records to prevent pot accumulation
+            const lobbyId = sessionId.split('_').slice(0, 2).join('_');
+            if (entryFeeService) {
+              await entryFeeService.clearLobbyPayments(lobbyId);
+              console.log(`🧹 Payment records cleared for ${lobbyId} (bot-only game cleanup)\n`);
+            }
+            
             return; // Pot stays in treasury
           }
         }
@@ -248,6 +275,14 @@ if (process.env.PLATFORM_WALLET_PRIVATE_KEY && process.env.SOLANA_RPC_URL) {
           console.log('╠════════════════════════════════════════════════════════════╣');
           console.log('║ Reason:        No entry fees collected (dev/test mode?)    ║');
           console.log('╚════════════════════════════════════════════════════════════╝\n');
+          
+          // Clear payment records anyway (cleanup)
+          const lobbyId = sessionId.split('_').slice(0, 2).join('_');
+          if (entryFeeService) {
+            await entryFeeService.clearLobbyPayments(lobbyId);
+            console.log(`🧹 Payment records cleared for ${lobbyId} (no-pot game cleanup)\n`);
+          }
+          
           return;
         }
         
@@ -506,6 +541,40 @@ app.get('/api/bans', (req: any, res: any) => {
   res.json({ bans, count: bans.length });
 });
 
+// API endpoint for x403 stats (admin/monitoring)
+app.get('/api/auth/stats', async (req: any, res: any) => {
+  try {
+    // Get in-memory stats
+    const { getX403Stats } = await import('./lib/x403.js');
+    const memoryStats = getX403Stats();
+
+    // Get database stats
+    let dbStats = {
+      totalSessions: 0,
+      activeSessions: 0,
+      expiredSessions: 0
+    };
+
+    try {
+      const now = new Date();
+      dbStats.totalSessions = await (AuthSession as any).countDocuments();
+      dbStats.activeSessions = await (AuthSession as any).countDocuments({ expiresAt: { $gt: now } });
+      dbStats.expiredSessions = await (AuthSession as any).countDocuments({ expiresAt: { $lte: now } });
+    } catch (error) {
+      console.warn('Could not fetch database stats:', error);
+    }
+
+    res.json({
+      memory: memoryStats,
+      database: dbStats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching x403 stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
 // API endpoint for leaderboard (top 50 winners)
 app.get('/api/leaderboard', async (req: any, res: any) => {
   try {
@@ -534,6 +603,394 @@ app.get('/api/chat', async (req: any, res: any) => {
   } catch (error) {
     console.error('Error fetching chat:', error);
     res.status(500).json({ error: 'Failed to fetch chat' });
+  }
+});
+
+/**
+ * x403 Session Logout
+ * Invalidate session when user disconnects wallet
+ */
+app.post('/api/auth/logout', async (req: any, res: any) => {
+  try {
+    const { walletAddress, sessionToken } = req.body;
+
+    if (!walletAddress && !sessionToken) {
+      return res.status(400).json({ error: 'Wallet address or session token required' });
+    }
+
+    // Delete session from MongoDB
+    let deletedCount = 0;
+
+    if (sessionToken) {
+      const result = await (AuthSession as any).deleteOne({ sessionToken });
+      deletedCount = result.deletedCount || 0;
+    } else if (walletAddress) {
+      const result = await (AuthSession as any).deleteMany({ walletAddress });
+      deletedCount = result.deletedCount || 0;
+    }
+
+    console.log(`🔓 x403: Logged out ${walletAddress?.slice(0, 8) || 'unknown'}... (${deletedCount} sessions deleted)`);
+
+    return res.json({ success: true, sessionsDeleted: deletedCount });
+  } catch (error: any) {
+    console.error('❌ x403 logout error:', error);
+    return res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+/**
+ * x403 Authentication Endpoint
+ * Step 1: Client requests auth → Server returns 403 + challenge
+ * Step 2: Client signs challenge → Server verifies and creates session
+ */
+app.post('/api/auth/challenge', async (req: any, res: any) => {
+  try {
+    const { walletAddress } = req.body;
+
+    if (!walletAddress) {
+      return res.status(400).json({ error: 'Wallet address required' });
+    }
+
+    // Check if wallet is rate limited
+    const rateLimit = isRateLimited(walletAddress);
+    if (rateLimit.limited) {
+      return res.status(429).json({ 
+        error: rateLimit.reason,
+        unlockAt: rateLimit.unlockAt,
+        rateLimited: true
+      });
+    }
+
+    // Check if wallet already has active session
+    try {
+      const existingSession = await (AuthSession as any).findOne({
+        walletAddress,
+        expiresAt: { $gt: new Date() } // Not expired
+      });
+
+      if (existingSession) {
+        console.log(`✅ x403: Existing session found for ${walletAddress.slice(0, 8)}...`);
+        
+        // Update last used
+        existingSession.lastUsed = new Date();
+        await existingSession.save();
+
+        return res.json({
+          authenticated: true,
+          sessionToken: existingSession.sessionToken,
+          expiresAt: existingSession.expiresAt,
+          existingSession: true
+        });
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not check existing session:', error);
+    }
+
+    // Generate new challenge
+    const domain = req.headers.host || 'localhost';
+    const authRequired = createAuthRequired(domain);
+
+    console.log(`📋 x403: Challenge generated for ${walletAddress.slice(0, 8)}...`);
+    console.log(`   Nonce: ${authRequired.challenge.nonce.slice(0, 16)}...`);
+    console.log(`   Expires: ${new Date(authRequired.challenge.expiresAt).toISOString()}`);
+
+    return res.status(403).json(authRequired);
+
+  } catch (error: any) {
+    console.error('❌ x403 challenge generation error:', error);
+    return res.status(500).json({ error: 'Failed to generate challenge' });
+  }
+});
+
+/**
+ * Verify signed challenge and create session
+ */
+app.post('/api/auth/verify', async (req: any, res: any) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(400).json({ error: 'Authorization header required' });
+    }
+
+    // Decode signed challenge
+    const signedChallenge = decodeAuthHeader(authHeader);
+    if (!signedChallenge) {
+      return res.status(400).json({ error: 'Invalid authorization format' });
+    }
+
+    const { walletAddress } = signedChallenge;
+
+    // Check rate limit
+    const rateLimit = isRateLimited(walletAddress);
+    if (rateLimit.limited) {
+      return res.status(429).json({ 
+        error: rateLimit.reason,
+        unlockAt: rateLimit.unlockAt,
+        rateLimited: true
+      });
+    }
+
+    // Verify signature
+    console.log(`🔍 x403: Verifying signature for ${walletAddress.slice(0, 8)}...`);
+    
+    const verification = verifySignature(signedChallenge);
+
+    if (!verification.valid) {
+      console.error(`❌ x403: Verification failed - ${verification.error}`);
+      
+      // Record failure for rate limiting
+      recordAuthFailure(walletAddress);
+      
+      return res.status(403).json({ 
+        error: verification.error,
+        authenticated: false
+      });
+    }
+
+    console.log(`✅ x403: Signature verified for ${walletAddress.slice(0, 8)}...`);
+
+    // Clear any existing rate limits on successful auth
+    clearRateLimit(walletAddress);
+
+    // Create session token
+    const { token: sessionToken, expiresAt } = createSessionToken(walletAddress, JWT_SECRET);
+
+    // Store session in MongoDB
+    try {
+      await (AuthSession as any).create({
+        walletAddress,
+        sessionToken,
+        createdAt: new Date(),
+        expiresAt,
+        lastUsed: new Date(),
+        gamesPlayed: 0,
+        ipAddress: req.ip || req.headers['x-forwarded-for'] || 'unknown',
+      });
+
+      console.log(`✅ x403: Session created for ${walletAddress.slice(0, 8)}... (expires in 30 min)`);
+    } catch (error) {
+      console.warn('⚠️ x403: Failed to store session in MongoDB:', error);
+      // Continue anyway - session token still works
+    }
+
+    return res.json({
+      authenticated: true,
+      sessionToken,
+      expiresAt,
+      walletAddress
+    });
+
+  } catch (error: any) {
+    console.error('❌ x403 verification error:', error);
+    return res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
+/**
+ * x402 Payment Required Endpoint (with x403 Authentication)
+ * Requires x403 session token in X-SESSION header
+ * Client requests to join lobby, server returns 402 if payment needed
+ * Client pays, then retries with X-PAYMENT header for verification
+ */
+app.post('/api/join-lobby', async (req: any, res: any) => {
+  try {
+    const { tier, playerId, playerName, walletAddress } = req.body;
+
+    // Validation
+    if (!tier || !playerId || !playerName) {
+      return res.status(400).json({ error: 'Missing required fields: tier, playerId, playerName' });
+    }
+
+    // x403 AUTHENTICATION REQUIRED
+    const sessionToken = req.headers['x-session'];
+    
+    if (!sessionToken) {
+      return res.status(403).json({ 
+        error: 'x403 authentication required. Please authenticate with your wallet first.',
+        requiresAuth: true
+      });
+    }
+
+    // Verify session token
+    const sessionVerification = verifySessionToken(sessionToken as string, JWT_SECRET);
+
+    if (!sessionVerification.valid) {
+      return res.status(403).json({ 
+        error: sessionVerification.error || 'Invalid session',
+        requiresAuth: true
+      });
+    }
+
+    // Verify session exists in database and update last used
+    try {
+      const session = await (AuthSession as any).findOne({
+        sessionToken,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (!session) {
+        return res.status(403).json({ 
+          error: 'Session expired or not found. Please authenticate again.',
+          requiresAuth: true
+        });
+      }
+
+      // Verify wallet address matches session
+      if (session.walletAddress !== walletAddress) {
+        return res.status(403).json({ 
+          error: 'Wallet address mismatch',
+          requiresAuth: true
+        });
+      }
+
+      // Update last used timestamp
+      session.lastUsed = new Date();
+      await session.save();
+
+      console.log(`✅ x403: Session validated for ${walletAddress.slice(0, 8)}...`);
+    } catch (error) {
+      console.warn('⚠️ x403: Could not verify session in database:', error);
+      // Continue - JWT is still valid
+    }
+
+    // Find game mode
+    const gameMode = config.gameModes.find(m => m.tier === tier);
+    if (!gameMode) {
+      return res.status(400).json({ error: 'Invalid tier' });
+    }
+
+    // Check if this tier requires payment
+    const requiresPayment = gameMode.requiresPayment && tier !== 'dream';
+
+    // Dream mode or free tier - no payment needed
+    if (!requiresPayment) {
+      // Generate free lobby token
+      const lobbyToken = jwt.sign(
+        {
+          playerId,
+          playerName,
+          tier,
+          walletAddress: walletAddress || null,
+          txSignature: 'free',
+          free: true
+        } as LobbyAccessToken,
+        JWT_SECRET,
+        { expiresIn: '10m' }
+      );
+
+      return res.json({
+        success: true,
+        lobbyToken,
+        free: true
+      });
+    }
+
+    // Paid tier - check for X-PAYMENT header
+    const paymentHeader = extractPaymentHeader(req);
+
+    if (!paymentHeader) {
+      // No payment provided → Return 402 Payment Required
+      if (!walletManager) {
+        return res.status(503).json({ error: 'Payment system not available' });
+      }
+
+      const paymentRequired = createPaymentRequired(
+        tier,
+        gameMode.buyIn,
+        walletManager.getPlatformAddress(),
+        process.env.USDC_MINT_ADDRESS || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+      );
+
+      console.log(`📋 x402: Sent payment requirements for $${gameMode.buyIn} (Tier: $${tier})`);
+
+      return res.status(402).json(paymentRequired);
+    }
+
+    // Payment provided - decode and verify
+    const payment = decodePaymentPayload(paymentHeader);
+
+    if (!payment || !validatePaymentPayload(payment)) {
+      return res.status(400).json({ error: 'Invalid payment payload' });
+    }
+
+    // Validate payment details match requirements
+    const expectedAmount = Math.floor(gameMode.buyIn * 1_000_000);
+    if (parseInt(payment.payload.amount) < expectedAmount) {
+      return res.status(402).json({ error: 'Insufficient payment amount' });
+    }
+
+    if (!walletAddress) {
+      return res.status(400).json({ error: 'Wallet address required for paid games' });
+    }
+
+    // Verify payment on Solana blockchain (x402 compliance!)
+    if (!walletManager) {
+      return res.status(503).json({ error: 'Payment verification unavailable' });
+    }
+
+    console.log('🔍 x402: Verifying payment on blockchain...');
+
+    const verification = await walletManager.verifyPaymentTransaction(
+      payment.payload.signature,
+      payment.payload.from,
+      gameMode.buyIn
+    );
+
+    if (!verification.valid) {
+      console.error(`❌ x402: Payment verification failed - ${verification.error}`);
+      return res.status(402).json({ 
+        error: `Payment verification failed: ${verification.error}` 
+      });
+    }
+
+    // Payment verified! Record it in database
+    if (entryFeeService) {
+      const lobbyId = `lobby_${tier}`;
+      const paymentResult = await entryFeeService.collectEntryFee(
+        playerId,
+        playerName,
+        walletAddress,
+        lobbyId,
+        tier,
+        gameMode.buyIn,
+        payment.payload.signature
+      );
+
+      if (!paymentResult.success) {
+        return res.status(402).json({ error: `Payment recording failed: ${paymentResult.error}` });
+      }
+
+      // Add to lobby pot
+      lobbyManager.addToPot(tier, gameMode.buyIn);
+    }
+
+    // Generate lobby access token (JWT)
+    const lobbyToken = jwt.sign(
+      {
+        playerId,
+        playerName,
+        tier,
+        walletAddress,
+        txSignature: payment.payload.signature,
+        free: false
+      } as LobbyAccessToken,
+      JWT_SECRET,
+      { expiresIn: '10m' }
+    );
+
+    console.log(`✅ x402: Payment verified, lobby token issued for ${playerName}`);
+
+    return res.json({
+      success: true,
+      verified: true,
+      lobbyToken,
+      txSignature: payment.payload.signature
+    });
+
+  } catch (error: any) {
+    console.error('❌ /api/join-lobby error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -683,8 +1140,24 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Player joins lobby (with optional wallet address and payment proof)
-  socket.on('playerJoinLobby', async ({ playerId, playerName, tier, walletAddress, txSignature }) => {
+  // Player joins lobby (with verified lobby token from x402 flow)
+  socket.on('playerJoinLobby', async ({ lobbyToken }) => {
+    // Verify and decode lobby token
+    let tokenData: LobbyAccessToken;
+
+    try {
+      tokenData = jwt.verify(lobbyToken, JWT_SECRET) as LobbyAccessToken;
+    } catch (error) {
+      console.error('❌ Invalid lobby token:', error);
+      socket.emit('lobbyError', { message: 'Invalid or expired lobby token' });
+      return;
+    }
+
+    // Extract data from verified token
+    const { playerId, playerName, tier, walletAddress, txSignature, free } = tokenData;
+
+    console.log(`🎟️  Verified lobby token for ${playerName} → $${tier} tier (${free ? 'FREE' : 'PAID'})`);
+
     // Get client IP using helper function
     const ipString = getClientIP(socket);
     const maskedIP = maskIP(ipString);
@@ -729,52 +1202,16 @@ io.on('connection', (socket) => {
       playerWallets.set(playerId, walletAddress);
       const shortWallet = `${walletAddress.substring(0, 8)}...${walletAddress.substring(walletAddress.length - 4)}`;
       console.log(`💼 Wallet: ${playerName} → ${shortWallet}`);
-    } else {
-      console.warn(`⚠️ No wallet: ${playerName}`);
     }
-    
-    // Check if this tier requires payment
+
+    // Payment already verified by x402 endpoint - pot already updated
+    // Just validate that paid games have payment
     const gameMode = config.gameModes.find(m => m.tier === tier);
     const requiresPayment = gameMode?.requiresPayment && tier !== 'dream';
     
-    if (requiresPayment) {
-      // Paid tier - validate payment
-      if (!walletAddress) {
-        socket.emit('lobbyError', { message: 'Wallet connection required for paid games' });
-        return;
-      }
-      
-      if (!txSignature) {
-        socket.emit('lobbyError', { message: 'Payment required. Please pay entry fee first.' });
-        return;
-      }
-      
-      if (!entryFeeService) {
-        socket.emit('lobbyError', { message: 'Payment system not available' });
-        return;
-      }
-      
-      const entryFee = gameMode!.buyIn;
-      const lobbyId = `lobby_${tier}`;
-      
-      // Record the payment
-      const paymentResult = await entryFeeService.collectEntryFee(
-        playerId,
-        playerName,
-        walletAddress,
-        lobbyId,
-        tier,
-        entryFee,
-        txSignature
-      );
-      
-      if (!paymentResult.success) {
-        socket.emit('lobbyError', { message: `Payment validation failed: ${paymentResult.error}` });
-        return;
-      }
-      
-      // Add to lobby pot
-      lobbyManager.addToPot(tier, entryFee);
+    if (requiresPayment && free) {
+      socket.emit('lobbyError', { message: 'Payment required for this tier' });
+      return;
     }
     
     const result = lobbyManager.joinLobby(socket.id, playerId, playerName, tier);
@@ -797,6 +1234,7 @@ io.on('connection', (socket) => {
         console.log(`📊 ${playerName} joined from ${maskIP(ipString)} (${activePlayersByIP.get(ipString)!.size} active from this network)`);
       }
       
+      console.log(`✅ x402: Player ${playerName} successfully joined lobby ${lobbyId}`);
       socket.emit('lobbyJoined', { lobbyId, tier });
       
       // Immediately send lobby status to this player
@@ -812,7 +1250,8 @@ io.on('connection', (socket) => {
         });
       }
     } else {
-      socket.emit('error', { message: result.message, code: 400 });
+      console.error(`❌ x402: Lobby join failed for ${playerName}: ${result.message}`);
+      socket.emit('lobbyError', { message: result.message });
     }
   });
 

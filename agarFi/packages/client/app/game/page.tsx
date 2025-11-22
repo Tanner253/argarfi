@@ -223,21 +223,24 @@ export default function GamePage() {
         console.log('Attempting to reconnect to game:', existingGameId);
         socket.emit('playerReconnect', { playerId, gameId: existingGameId });
       } else {
-        // Join lobby (with wallet address for payouts and payment proof)
-        const entryPaymentTx = localStorage.getItem('entryPaymentTx');
+        // Join lobby using x402-verified lobby token
+        const lobbyToken = localStorage.getItem('lobbyToken');
+        
+        if (!lobbyToken) {
+          console.error('❌ No lobby token found - redirecting to homepage');
+          router.push('/');
+          return;
+        }
+        
+        console.log('🎟️  Joining lobby with verified token');
         
         socket.emit('playerJoinLobby', { 
-          playerId, 
-          playerName, 
-          tier, 
-          walletAddress,
-          txSignature: entryPaymentTx || undefined
+          lobbyToken
         });
         
-        // Clear payment tx after sending (one-time use)
-        if (entryPaymentTx) {
-          localStorage.removeItem('entryPaymentTx');
-        }
+        // Clear lobby token after use (one-time)
+        localStorage.removeItem('lobbyToken');
+        localStorage.removeItem('entryPaymentTx'); // Clean up old field
       }
     });
 

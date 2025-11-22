@@ -49,14 +49,24 @@ export class EntryFeeService {
         // Save payment record to database
         const { LobbyPayment } = await import('../models/LobbyPayment.js');
         
-        // Check if payment already exists (prevent double-recording)
-        const existing = await (LobbyPayment as any).findOne({ txSignature });
-        if (existing) {
-          console.log(`ℹ️ Payment already recorded: ${txSignature}`);
+        // Check if payment already exists (prevent double-recording by tx OR by player+lobby)
+        const existingByTx = await (LobbyPayment as any).findOne({ txSignature });
+        if (existingByTx) {
+          console.log(`ℹ️ Payment already recorded by TX: ${txSignature}`);
           return {
             success: true,
             txSignature,
           };
+        }
+
+        const existingByPlayer = await (LobbyPayment as any).findOne({ 
+          playerId, 
+          lobbyId,
+          status: 'paid' 
+        });
+        if (existingByPlayer) {
+          console.warn(`⚠️ Player ${playerId} already has paid entry for ${lobbyId} - deleting old record`);
+          await (LobbyPayment as any).deleteOne({ _id: existingByPlayer._id });
         }
 
         await (LobbyPayment as any).create({
@@ -152,17 +162,20 @@ export class EntryFeeService {
       console.log(`   View: https://solscan.io/tx/${signature}`);
       console.log(separator + '\n');
 
-      // Update payment record in database
+      // DELETE payment record from database (refunded = not in pot)
       if (mongoose.connection.readyState === 1) {
         const { LobbyPayment } = await import('../models/LobbyPayment.js');
-        await (LobbyPayment as any).findOneAndUpdate(
-          { playerId, lobbyId, status: 'paid' },
-          { 
-            status: 'refunded',
-            refundTx: signature,
-          }
-        );
-        console.log(`📝 Payment record updated: ${playerId} refunded`);
+        const deleteResult = await (LobbyPayment as any).deleteOne({
+          playerId,
+          lobbyId,
+          status: 'paid'
+        });
+
+        if (deleteResult.deletedCount > 0) {
+          console.log(`📝 Payment record deleted: ${playerId} refunded (removed from pot)`);
+        } else {
+          console.warn(`⚠️ No payment record found to delete for ${playerId} in ${lobbyId}`);
+        }
       }
 
       return {

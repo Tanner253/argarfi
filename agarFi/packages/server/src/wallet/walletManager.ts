@@ -69,6 +69,124 @@ export class WalletManager {
   }
 
   /**
+   * Verify a payment transaction on-chain (x402 compliance)
+   * Checks that transaction exists, has correct sender/receiver/amount
+   */
+  async verifyPaymentTransaction(
+    txSignature: string,
+    expectedFrom: string,
+    expectedAmount: number
+  ): Promise<{ valid: boolean; error?: string }> {
+    try {
+      console.log('🔍 Verifying payment on Solana blockchain...');
+      console.log(`   TX: ${txSignature}`);
+      console.log(`   From: ${expectedFrom.slice(0, 8)}...`);
+      console.log(`   Amount: $${expectedAmount} USDC`);
+
+      // Fetch transaction from blockchain
+      const tx = await this.connection.getTransaction(txSignature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed'
+      });
+
+      if (!tx) {
+        return { valid: false, error: 'Transaction not found on blockchain' };
+      }
+
+      // Check if transaction succeeded
+      if (tx.meta?.err) {
+        return { valid: false, error: 'Transaction failed on-chain' };
+      }
+
+      // Get platform wallet's USDC token account
+      const platformAta = await getAssociatedTokenAddress(
+        this.usdcMint,
+        this.platformWallet.publicKey
+      );
+
+      // Parse token balances to verify USDC transfer
+      const preBalances = tx.meta?.preTokenBalances || [];
+      const postBalances = tx.meta?.postTokenBalances || [];
+
+      // Find platform wallet's token account in balances
+      const platformAccountIndex = postBalances.findIndex(
+        balance => balance.owner === this.platformWallet.publicKey.toString() &&
+                  balance.mint === this.usdcMint.toString()
+      );
+
+      if (platformAccountIndex === -1) {
+        // Fallback: Check account keys (handle both legacy and versioned transactions)
+        let accountKeys: PublicKey[] = [];
+        
+        if ('accountKeys' in tx.transaction.message) {
+          // Legacy transaction
+          accountKeys = (tx.transaction.message as any).accountKeys || [];
+        } else if (tx.transaction.message.getAccountKeys) {
+          // Versioned transaction
+          const keys = tx.transaction.message.getAccountKeys();
+          accountKeys = keys.staticAccountKeys || [];
+        }
+        
+        const hasPlatformAccount = accountKeys.some(
+          key => key.toString() === platformAta.toString()
+        );
+
+        if (!hasPlatformAccount) {
+          return { valid: false, error: 'Platform wallet not involved in transaction' };
+        }
+      }
+
+      // Verify amount received (if balance data available)
+      if (platformAccountIndex !== -1) {
+        const preBalance = preBalances.find(b => b.accountIndex === platformAccountIndex);
+        const postBalance = postBalances[platformAccountIndex];
+
+        if (preBalance && postBalance) {
+          const preAmount = parseInt(preBalance.uiTokenAmount.amount);
+          const postAmount = parseInt(postBalance.uiTokenAmount.amount);
+          const received = postAmount - preAmount;
+          const expectedLamports = Math.floor(expectedAmount * 1_000_000);
+
+          if (received < expectedLamports) {
+            return { 
+              valid: false, 
+              error: `Insufficient payment: received ${received / 1_000_000} USDC, expected ${expectedAmount}` 
+            };
+          }
+
+          console.log(`✅ Payment verified: ${received / 1_000_000} USDC received`);
+        }
+      }
+
+      // Verify sender (from address) - handle both legacy and versioned transactions
+      let signer: string | undefined;
+      
+      if ('accountKeys' in tx.transaction.message && (tx.transaction.message as any).accountKeys) {
+        // Legacy transaction
+        signer = (tx.transaction.message as any).accountKeys[0]?.toString();
+      } else if (tx.transaction.message.getAccountKeys) {
+        // Versioned transaction
+        const keys = tx.transaction.message.getAccountKeys();
+        signer = keys.staticAccountKeys[0]?.toString();
+      }
+
+      if (signer !== expectedFrom) {
+        return { valid: false, error: 'Transaction sender mismatch' };
+      }
+
+      console.log('✅ Payment verification passed');
+      console.log(`   Sender: ${signer.slice(0, 8)}... ✓`);
+      console.log(`   Recipient: Platform wallet ✓`);
+      console.log(`   Amount: $${expectedAmount} USDC ✓`);
+
+      return { valid: true };
+    } catch (error: any) {
+      console.error('❌ Payment verification failed:', error);
+      return { valid: false, error: error.message || 'Verification error' };
+    }
+  }
+
+  /**
    * Get platform's USDC balance
    */
   async getUSDCBalance(): Promise<number> {

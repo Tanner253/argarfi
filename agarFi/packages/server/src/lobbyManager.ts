@@ -456,12 +456,11 @@ export class LobbyManager {
   }
 
   /**
-   * Fill lobby with bots for testing (max 10 bots)
+   * Fill lobby with bots for testing (fills to minimum player requirement)
    */
   private fillWithBots(lobby: Lobby): void {
-    const MAX_BOTS = 10;
     const currentBotCount = Array.from(lobby.players.values()).filter(p => p.isBot).length;
-    const needed = Math.min(config.lobby.minPlayers - lobby.players.size, MAX_BOTS - currentBotCount);
+    const needed = config.lobby.minPlayers - lobby.players.size;
     
     if (needed <= 0) return;
     
@@ -494,7 +493,7 @@ export class LobbyManager {
       });
     }
 
-    console.log(`Filled ${lobby.tier} lobby with ${needed} bots (max 10)`);
+    console.log(`Filled ${lobby.tier} lobby with ${needed} bots to reach min ${config.lobby.minPlayers}`);
     this.checkLobbyCountdown(lobby);
   }
 

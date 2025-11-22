@@ -126,31 +126,32 @@ export async function payEntryFee(
     
     let signature: string;
     
-    // Send transaction using wallet adapter
+    // Sign and broadcast transaction (SilkRoad's proven mobile-compatible method)
     try {
-      if (!wallet.sendTransaction) {
-        throw new Error('Wallet does not support sendTransaction method');
+      if (!wallet.signTransaction) {
+        throw new Error('Wallet does not support transaction signing');
       }
       
-      console.log('💳 Calling wallet.sendTransaction...');
+      console.log('✍️  Step 1: Requesting wallet signature...');
       console.log('⏳ Opening wallet for approval... (check your mobile wallet app)');
       console.log(`   Transaction instructions: ${transaction.instructions.length}`);
       console.log(`   Fee payer: ${transaction.feePayer?.toBase58().slice(0, 8)}...`);
       
-      // Use sendTransaction - wallet handles signing and broadcasting
-      signature = await wallet.sendTransaction(transaction, connection);
+      // Sign transaction (opens Phantom - works on mobile!)
+      const signed = await wallet.signTransaction(transaction);
       
-      console.log(`✅ Wallet returned signature: ${signature}`);
+      console.log('✅ Transaction signed by user!');
+      console.log('📡 Step 2: Broadcasting to Solana network...');
+      
+      // Broadcast the signed transaction ourselves
+      signature = await connection.sendRawTransaction(signed.serialize());
+      
+      console.log(`✅ Transaction broadcast! Signature: ${signature}`);
     } catch (signError: any) {
-      console.error('❌ wallet.sendTransaction threw error:', signError);
+      console.error('❌ Transaction signing/broadcast failed:', signError);
       console.error('   Error name:', signError.name);
       console.error('   Error message:', signError.message);
       console.error('   Error code:', signError.code);
-      
-      // Log full error object for debugging
-      if (signError.logs) {
-        console.error('   Transaction logs:', signError.logs);
-      }
       
       throw signError; // Re-throw to be caught by outer catch
     }

@@ -24,19 +24,27 @@ export const config = {
     shrinkStartPercent: parseFloat(process.env.SHRINK_START_PERCENT || '0.5'), // Start at 50% time
   },
   lobby: {
-    minPlayers: parseInt(process.env.MIN_PLAYERS_DEV || process.env.LOBBY_MIN_PLAYERS || '10'),
+    // In production: ALWAYS use LOBBY_MIN_PLAYERS (ignore MIN_PLAYERS_DEV)
+    // In development: Use MIN_PLAYERS_DEV if set, else LOBBY_MIN_PLAYERS
+    minPlayers: process.env.NODE_ENV === 'production'
+      ? parseInt(process.env.LOBBY_MIN_PLAYERS || '10')
+      : parseInt(process.env.MIN_PLAYERS_DEV || process.env.LOBBY_MIN_PLAYERS || '10'),
     maxPlayersStandard: parseInt(process.env.LOBBY_MAX_PLAYERS_STANDARD || '25'),
     maxPlayersWhale: parseInt(process.env.LOBBY_MAX_PLAYERS_WHALE || '50'),
     maxWaitTime: parseInt(process.env.LOBBY_MAX_WAIT_MS || '600000'),
     autoStartCountdown: parseInt(process.env.LOBBY_AUTO_START_COUNTDOWN_MS || '120000'),
   },
   dev: {
-    autoFillBots: process.env.AUTO_FILL_BOTS === 'true',
+    // Auto-fill bots ONLY in development (never in production)
+    autoFillBots: process.env.NODE_ENV !== 'production' && process.env.AUTO_FILL_BOTS === 'true',
   },
   dream: {
     enabled: process.env.DREAM_ENABLED === 'true',
     payoutUSDC: parseFloat(process.env.DREAM_PAYOUT_USDC || '1'),
-    minPlayers: parseInt(process.env.DREAM_MIN_PLAYERS || '10'),
+    // Dream uses same min players as lobbies (respects NODE_ENV)
+    minPlayers: process.env.NODE_ENV === 'production'
+      ? parseInt(process.env.LOBBY_MIN_PLAYERS || '10')
+      : parseInt(process.env.MIN_PLAYERS_DEV || process.env.DREAM_MIN_PLAYERS || '10'),
     maxPlayers: parseInt(process.env.DREAM_MAX_PLAYERS || '25'),
     gameDuration: parseInt(process.env.DREAM_GAME_DURATION_MS || '1800000'),
     intervalHours: parseInt(process.env.DREAM_INTERVAL_HOURS || '1'),
