@@ -31,16 +31,22 @@ Phase 1 delivers a **fully functional Agar.io clone** with:
 - Configurable minimum players (dev mode: 2)
 - Auto-fill lobbies with bots
 
-✅ **Phase 2 Complete**
-- USDC payments (x402)
-- Token gating (100k $AgarFi)
+✅ **Phase 2 Complete - x402 Payments**
+- USDC entry fee payments (x402 protocol)
+- HTTP 402 status codes with payment requirements
+- Blockchain verification of all transactions
+- Token gating (100k $AgarFi required)
 - Database persistence (MongoDB)
-- Transaction logging
+- Transaction logging and transparency
 
-❌ **Not Yet Implemented (Phase 3)**
-- Wallet authentication (x403)
-- Session-based auth
-- One wallet = one game enforcement
+✅ **Phase 3 Complete - x403 Authentication**
+- Wallet signature authentication (x403 protocol)
+- HTTP 403 challenges with cryptographic verification
+- 30-minute session management
+- One wallet = one active game session
+- Progressive rate limiting (5 free attempts, then timeouts)
+- Anti-bot and anti-farming protection
+- Replay attack prevention
 
 ---
 
