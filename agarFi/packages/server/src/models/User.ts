@@ -26,3 +26,4 @@ UserSchema.index({ gamesWon: -1 });
 
 export const User = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
 
+

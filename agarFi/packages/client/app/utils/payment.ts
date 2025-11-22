@@ -138,7 +138,7 @@ export async function payEntryFee(
       console.log(`   Fee payer: ${transaction.feePayer?.toBase58().slice(0, 8)}...`);
       
       // Sign transaction (opens Phantom - works on mobile!)
-      const signed = await wallet.signTransaction(transaction);
+        const signed = await wallet.signTransaction(transaction);
       
       console.log('✅ Transaction signed by user!');
       console.log('📡 Step 2: Broadcasting to Solana network...');

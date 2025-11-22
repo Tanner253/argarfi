@@ -803,7 +803,7 @@ export default function HomePage() {
     } else {
       // Free tier (Dream Mode) - use x402 to get lobby token (no payment)
       try {
-        const playerId = `player_${Date.now()}`;
+      const playerId = `player_${Date.now()}`;
         const serverUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
 
         console.log('🎟️  Requesting free lobby token for Dream Mode...');
@@ -831,13 +831,13 @@ export default function HomePage() {
 
         console.log('✅ Free lobby token received');
 
-        localStorage.setItem('playerId', playerId);
-        localStorage.setItem('playerName', playerName);
-        localStorage.setItem('selectedTier', tier);
-        localStorage.setItem('playerWallet', walletAddress || '');
+      localStorage.setItem('playerId', playerId);
+      localStorage.setItem('playerName', playerName);
+      localStorage.setItem('selectedTier', tier);
+      localStorage.setItem('playerWallet', walletAddress || '');
         localStorage.setItem('lobbyToken', result.lobbyToken);
-        
-        router.push('/game');
+      
+      router.push('/game');
       } catch (error: any) {
         setToastMessage(`Error joining lobby: ${error.message}`);
       }
@@ -881,7 +881,7 @@ export default function HomePage() {
         setPayingForTier(null);
         return;
       }
-
+      
       const playerId = `player_${Date.now()}`;
 
       // ====================================
@@ -932,14 +932,14 @@ export default function HomePage() {
         setPayingForTier(null);
         return;
       }
-
+      
       console.log(`✅ Payment successful: ${paymentResult.signature}`);
 
       // Update balance (optimistic)
       if (usdcBalance !== null) {
         setUsdcBalance(usdcBalance - entryFee);
       }
-
+      
       // ====================================
       // x402 PROTOCOL - Step 3: Retry with X-PAYMENT Header
       // ====================================

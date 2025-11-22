@@ -1203,7 +1203,7 @@ io.on('connection', (socket) => {
       const shortWallet = `${walletAddress.substring(0, 8)}...${walletAddress.substring(walletAddress.length - 4)}`;
       console.log(`💼 Wallet: ${playerName} → ${shortWallet}`);
     }
-
+    
     // Payment already verified by x402 endpoint - pot already updated
     // Just validate that paid games have payment
     const gameMode = config.gameModes.find(m => m.tier === tier);
@@ -1211,7 +1211,7 @@ io.on('connection', (socket) => {
     
     if (requiresPayment && free) {
       socket.emit('lobbyError', { message: 'Payment required for this tier' });
-      return;
+        return;
     }
     
     const result = lobbyManager.joinLobby(socket.id, playerId, playerName, tier);

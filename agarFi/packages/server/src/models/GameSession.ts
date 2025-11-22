@@ -39,3 +39,4 @@ GameSessionSchema.index({ status: 1, startTime: -1 });
 
 export const GameSession = mongoose.models.GameSession || mongoose.model<IGameSession>('GameSession', GameSessionSchema);
 
+

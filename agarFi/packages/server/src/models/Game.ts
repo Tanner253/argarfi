@@ -30,3 +30,4 @@ GameSchema.index({ tier: 1, timestamp: -1 });
 
 export const Game = mongoose.models.Game || mongoose.model<IGame>('Game', GameSchema);
 
+

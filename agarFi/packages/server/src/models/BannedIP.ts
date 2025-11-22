@@ -23,3 +23,4 @@ BannedIPSchema.index({ ip: 1 });
 
 export const BannedIP = mongoose.models.BannedIP || mongoose.model<IBannedIP>('BannedIP', BannedIPSchema);
 
+

@@ -30,25 +30,25 @@ export function AuthModal({ isOpen, onSign, onCancel, isLoading, error, challeng
             initial={{ scale: 0.9, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.9, opacity: 0, y: 20 }}
-            className="relative bg-gradient-to-br from-cyber-dark to-black border-2 border-neon-green rounded-2xl shadow-2xl max-w-lg w-full"
+            className="relative bg-gradient-to-br from-cyber-dark to-black border-2 border-neon-green rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col"
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border-b border-neon-green/30 p-6">
+            <div className="bg-gradient-to-r from-neon-green/20 to-neon-blue/20 border-b border-neon-green/30 p-4 md:p-6 shrink-0">
               <div className="flex items-center gap-3 mb-2">
                 <div className="text-4xl">🔐</div>
-                <h2 className="text-2xl font-black text-white">
+                <h2 className="text-xl md:text-2xl font-black text-white">
                   Wallet Verification Required
                 </h2>
               </div>
-              <p className="text-sm text-gray-300">
+              <p className="text-xs md:text-sm text-gray-300">
                 x403 Protocol - Cryptographic Authentication
               </p>
             </div>
 
             {/* Content */}
-            <div className="p-6 space-y-4">
+            <div className="p-4 md:p-6 space-y-3 md:space-y-4 overflow-y-auto flex-1">
               {/* Explanation */}
-              <div className="bg-neon-blue/10 border border-neon-blue/30 rounded-lg p-4">
+              <div className="bg-neon-blue/10 border border-neon-blue/30 rounded-lg p-3 md:p-4">
                 <h3 className="text-sm font-bold text-neon-blue mb-2">
                   Why This Is Safe:
                 </h3>
@@ -61,7 +61,7 @@ export function AuthModal({ isOpen, onSign, onCancel, isLoading, error, challeng
               </div>
 
               {/* Benefits */}
-              <div className="bg-neon-green/10 border border-neon-green/30 rounded-lg p-4">
+              <div className="bg-neon-green/10 border border-neon-green/30 rounded-lg p-3 md:p-4">
                 <h3 className="text-sm font-bold text-neon-green mb-2">
                   How x403 Protects You:
                 </h3>
@@ -74,7 +74,7 @@ export function AuthModal({ isOpen, onSign, onCancel, isLoading, error, challeng
               </div>
 
               {/* Authorization */}
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 md:p-4">
                 <h3 className="text-sm font-bold text-yellow-400 mb-2">
                   By Signing, You Authorize AgarFi To:
                 </h3>
@@ -87,7 +87,7 @@ export function AuthModal({ isOpen, onSign, onCancel, isLoading, error, challeng
               </div>
 
               {/* Security Warning */}
-              <div className="bg-red-500/10 border-2 border-red-500/50 rounded-lg p-4">
+              <div className="bg-red-500/10 border-2 border-red-500/50 rounded-lg p-3 md:p-4">
                 <h3 className="text-sm font-bold text-red-400 mb-2 flex items-center gap-2">
                   ⚠️ SECURITY: Verify Domain
                 </h3>
@@ -129,7 +129,7 @@ export function AuthModal({ isOpen, onSign, onCancel, isLoading, error, challeng
             </div>
 
             {/* Actions */}
-            <div className="border-t border-gray-700 p-6 flex gap-3">
+            <div className="border-t border-gray-700 p-4 md:p-6 flex gap-3 shrink-0">
               <button
                 onClick={onCancel}
                 disabled={isLoading}
