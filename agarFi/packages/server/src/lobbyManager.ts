@@ -351,7 +351,7 @@ export class LobbyManager {
         status: lobby.status,
         spectatorCount,
         countdown: lobby.countdownStartTime 
-          ? Math.max(0, config.lobby.autoStartCountdown - (Date.now() - lobby.countdownStartTime))
+          ? Math.max(0, Math.floor((config.lobby.autoStartCountdown - (Date.now() - lobby.countdownStartTime)) / 1000))
           : null,
       };
     });

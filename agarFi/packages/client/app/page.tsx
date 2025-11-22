@@ -1381,10 +1381,26 @@ export default function HomePage() {
                     <div className="text-sm text-white/80 mt-2 drop-shadow">
                       {(() => {
                         const intervalHours = parseFloat(process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1');
+                        let intervalText = '';
                         if (intervalHours < 1) {
-                          return `Free game every ${Math.round(intervalHours * 60)} minutes!`;
+                          intervalText = `${Math.round(intervalHours * 60)} minutes`;
+                        } else {
+                          intervalText = `${intervalHours} hour${intervalHours > 1 ? 's' : ''}`;
                         }
-                        return `Free game every ${intervalHours} hour${intervalHours > 1 ? 's' : ''}!`;
+                        
+                        const playersNeeded = (dreamLobby?.min || parseInt(process.env.NEXT_PUBLIC_DREAM_MIN_PLAYERS || '10')) - (dreamLobby?.playersLocked || 0);
+                        const needsPlayers = playersNeeded > 0;
+                        
+                        return (
+                          <div className="flex flex-col gap-1">
+                            <div>Free game every {intervalText}!</div>
+                            {needsPlayers && (
+                              <div className="text-xs font-bold text-yellow-400 animate-pulse">
+                                Need {playersNeeded} more player{playersNeeded !== 1 ? 's' : ''} to start!
+                              </div>
+                            )}
+                          </div>
+                        );
                       })()}
                     </div>
                   </div>
@@ -1393,7 +1409,7 @@ export default function HomePage() {
                   {dreamLobby?.countdown !== null && dreamLobby?.countdown !== undefined && dreamLobby.countdown > 0 && (
                     <div className="bg-pink-400/20 border-2 border-pink-400/50 rounded-xl p-4 mb-4 text-center">
                       <div className="text-2xl md:text-3xl font-black text-pink-300 mb-1">
-                        Starting in {Math.ceil(dreamLobby.countdown / 1000)}s
+                        Starting in {dreamLobby.countdown}s
                       </div>
                       <div className="text-xs text-white/80 font-bold mb-1">Countdown is to allow more players to join! 🚀</div>
                       <div className="text-xs text-white/60">Get ready! ✨</div>
