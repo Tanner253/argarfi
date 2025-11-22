@@ -1379,7 +1379,13 @@ export default function HomePage() {
                       Win ${process.env.NEXT_PUBLIC_DREAM_PAYOUT || '1'} USDC
                     </div>
                     <div className="text-sm text-white/80 mt-2 drop-shadow">
-                      Free game every {process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1'} hour!
+                      {(() => {
+                        const intervalHours = parseFloat(process.env.NEXT_PUBLIC_DREAM_INTERVAL_HOURS || '1');
+                        if (intervalHours < 1) {
+                          return `Free game every ${Math.round(intervalHours * 60)} minutes!`;
+                        }
+                        return `Free game every ${intervalHours} hour${intervalHours > 1 ? 's' : ''}!`;
+                      })()}
                     </div>
                   </div>
 
@@ -1387,9 +1393,10 @@ export default function HomePage() {
                   {dreamLobby?.countdown !== null && dreamLobby?.countdown !== undefined && dreamLobby.countdown > 0 && (
                     <div className="bg-pink-400/20 border-2 border-pink-400/50 rounded-xl p-4 mb-4 text-center">
                       <div className="text-2xl md:text-3xl font-black text-pink-300 mb-1">
-                        Starting in {dreamLobby.countdown}s
+                        Starting in {Math.ceil(dreamLobby.countdown / 1000)}s
                       </div>
-                      <div className="text-xs text-white/80">Get ready! ✨</div>
+                      <div className="text-xs text-white/80 font-bold mb-1">Countdown is to allow more players to join! 🚀</div>
+                      <div className="text-xs text-white/60">Get ready! ✨</div>
                     </div>
                   )}
 

@@ -1406,6 +1406,7 @@ export default function GamePage() {
               <div className="text-2xl font-bold text-red-400 mb-2">
                 Starting in {lobbyStatus.countdown}s
               </div>
+              <div className="text-xs text-white/80 font-bold mb-2">Countdown timer is to allow for more players to join the game!</div>
               <div className="text-sm font-bold text-red-300">🔒 POT LOCKED - No Refunds!</div>
               <div className="text-xs text-gray-400 mt-1">Entry fee is non-refundable</div>
             </div>

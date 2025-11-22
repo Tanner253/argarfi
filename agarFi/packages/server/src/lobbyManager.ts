@@ -343,8 +343,9 @@ export class LobbyManager {
       return {
         id: lobby.id,
         tier: lobby.tier,
-        playersCount: realPlayerCount + botCount,
-        realPlayerCount,
+      playersCount: realPlayerCount + botCount,
+      playersLocked: realPlayerCount + botCount, // Added for client compatibility
+      realPlayerCount,
         botCount,
         maxPlayers: lobby.maxPlayers,
         status: lobby.status,
