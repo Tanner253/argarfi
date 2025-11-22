@@ -43,7 +43,7 @@ export const config = {
     payoutUSDC: parseFloat(process.env.DREAM_PAYOUT_USDC || '1'),
     // Dream uses same min players as lobbies (respects NODE_ENV)
     minPlayers: process.env.NODE_ENV === 'production'
-      ? parseInt(process.env.LOBBY_MIN_PLAYERS || '10')
+      ? parseInt(process.env.DREAM_MIN_PLAYERS || process.env.LOBBY_MIN_PLAYERS || '10')
       : parseInt(process.env.MIN_PLAYERS_DEV || process.env.DREAM_MIN_PLAYERS || '10'),
     maxPlayers: parseInt(process.env.DREAM_MAX_PLAYERS || '25'),
     gameDuration: parseInt(process.env.DREAM_GAME_DURATION_MS || '1800000'),
