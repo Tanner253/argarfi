@@ -513,13 +513,16 @@ export class LobbyManager {
     }
     
     // In dev mode with MIN_PLAYERS_DEV=1, start immediately
-    if (config.lobby.minPlayers === 1 && lobby.players.size >= 1) {
+    if (config.lobby.minPlayers === 1 && lobby.players.size >= 1 && lobby.tier !== 'dream') {
       console.log(`Dev mode: Starting game immediately with ${lobby.players.size} player(s)`);
       this.startGame(lobby).catch(err => console.error('Failed to start game:', err));
       return;
     }
 
-    if (lobby.players.size >= config.lobby.minPlayers) {
+    // Dream Mode uses different min players rule if configured
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+
+    if (lobby.players.size >= minPlayers) {
       lobby.status = 'countdown';
       lobby.countdownStartTime = Date.now();
 
@@ -563,7 +566,9 @@ export class LobbyManager {
    */
   private async startGame(lobby: Lobby): Promise<void> {
     // Check if still have minimum players
-    if (lobby.players.size < config.lobby.minPlayers) {
+    const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+    
+    if (lobby.players.size < minPlayers) {
       console.log(`Lobby ${lobby.id} cancelled - insufficient players`);
       lobby.status = 'waiting';
       lobby.countdownStartTime = null;
@@ -811,7 +816,8 @@ export class LobbyManager {
         console.log(`Player ${playerId} left lobby ${lobby.id}`);
 
         // If in countdown and drops below minimum, cancel
-        if (lobby.status === 'countdown' && lobby.players.size < config.lobby.minPlayers) {
+        const minPlayers = lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers;
+        if (lobby.status === 'countdown' && lobby.players.size < minPlayers) {
           lobby.status = 'waiting';
           lobby.countdownStartTime = null;
           console.log(`Lobby ${lobby.id} countdown cancelled - below minimum`);
@@ -877,7 +883,7 @@ export class LobbyManager {
       realPlayerCount,
       botCount,
       maxPlayers: lobby.maxPlayers,
-      minPlayers: config.lobby.minPlayers,
+      minPlayers: lobby.tier === 'dream' ? config.dream.minPlayers : config.lobby.minPlayers,
       status: lobby.status,
       countdown,
       spectatorCount,
