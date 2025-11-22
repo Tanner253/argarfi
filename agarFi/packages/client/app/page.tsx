@@ -52,6 +52,8 @@ interface ChatMessage {
   timestamp: number;
 }
 
+import { HypeVideoBanner } from './components/HypeVideoBanner';
+
 export default function HomePage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1238,9 +1240,13 @@ export default function HomePage() {
       </motion.nav>
 
       {/* Main Content */}
-      <div className="relative z-10 pt-16 px-4 pb-8">
-        <div className="max-w-[1400px] mx-auto">
-          
+      <div className="relative z-10 pt-[54px] pb-8">
+        
+        {/* Hype Video Banner - Memoized to prevent re-render stops */}
+        <HypeVideoBanner />
+
+        <div className="max-w-[1400px] mx-auto px-4">
+
           {/* Hero - Centered */}
           <motion.div
             className="text-center mb-6 md:mb-8 mt-4 md:mt-8 px-4"
@@ -1826,7 +1832,11 @@ export default function HomePage() {
               <span className="font-mono sm:hidden">{copied ? 'Copied!' : CONTRACT_ADDRESS.slice(0, 6) + '...' + CONTRACT_ADDRESS.slice(-4)}</span>
             </button>
           </motion.div>
-
+        </div>
+        
+        {/* Footer Hype Video Banner - Full Width */}
+        <div className="mt-16 border-t border-neon-green/20">
+          <HypeVideoBanner />
         </div>
       </div>
 
