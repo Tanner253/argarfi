@@ -52,7 +52,6 @@ interface ChatMessage {
   timestamp: number;
 }
 
-import { HypeVideoBanner } from './components/HypeVideoBanner';
 
 export default function HomePage() {
   const router = useRouter();
@@ -1241,10 +1240,6 @@ export default function HomePage() {
 
       {/* Main Content */}
       <div className="relative z-10 pt-[54px] pb-8">
-        
-        {/* Hype Video Banner - Memoized to prevent re-render stops */}
-        <HypeVideoBanner />
-
         <div className="max-w-[1400px] mx-auto px-4">
 
           {/* Hero - Centered */}
@@ -1857,10 +1852,6 @@ export default function HomePage() {
           </motion.div>
         </div>
         
-        {/* Footer Hype Video Banner - Full Width */}
-        <div className="mt-16 border-t border-neon-green/20">
-          <HypeVideoBanner />
-        </div>
       </div>
 
       {/* Rolling Event Feed - Single Item with Slot Machine Animation */}
